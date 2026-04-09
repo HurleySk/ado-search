@@ -5,7 +5,11 @@ Sync and search Azure DevOps work items and wiki pages locally for AI agents.
 ## Install
 
 ```bash
-pip install ado-search
+# From git
+pip install git+https://dev.azure.com/pcxhub-acms/Aquila/_git/ado-search
+
+# Or from a local clone
+pip install .
 ```
 
 ## Quick Start
@@ -25,7 +29,9 @@ ado-search search "setup guide" --format paths
 
 ## How It Works
 
-1. **Sync** pulls work items and wiki pages via `az devops` CLI (or Azure PowerShell)
+1. **Sync** pulls work items and wiki pages from Azure DevOps
+   - Tries **OData analytics** first (fetches all items in one call — fast)
+   - Falls back to **az devops CLI** if analytics isn't available
 2. Content is stored as compact **markdown files** (one per item)
 3. Metadata is indexed in **SQLite with FTS5** for fast full-text search
 4. Agents search the index, then read only the files they need — minimal context
@@ -45,3 +51,19 @@ ado-search search "setup guide" --format paths
 - **az-powershell**: Uses Azure PowerShell + REST. Requires `Connect-AzAccount`.
 
 Set via `ado-search init --auth-method az-powershell` or in `config.toml`.
+
+## Search Formats
+
+```bash
+ado-search search "query"                          # compact (default)
+ado-search search "query" --format detail           # with description snippets
+ado-search search "query" --format json             # machine-readable
+ado-search search "query" --format paths            # file paths only (for agent piping)
+ado-search search "query" --type Bug --state Active # filtered
+```
+
+## Prerequisites
+
+- Python 3.10+
+- Azure CLI with `azure-devops` extension (`az extension add --name azure-devops`)
+- `az login` completed

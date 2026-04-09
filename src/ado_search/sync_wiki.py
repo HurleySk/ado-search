@@ -6,16 +6,10 @@ from pathlib import Path
 
 import click
 
-from ado_search.auth import build_az_cli_command, build_powershell_command
+from ado_search.auth import build_command
 from ado_search.db import Database
 from ado_search.markdown import wiki_page_to_markdown
 from ado_search.runner import run_command
-
-
-def _build_command(operation: str, auth_method: str, **kwargs) -> list[str]:
-    if auth_method == "az-cli":
-        return build_az_cli_command(operation, **kwargs)
-    return build_powershell_command(operation, **kwargs)
 
 
 def _flatten_wiki_pages(tree: dict) -> list[dict]:
@@ -46,7 +40,7 @@ async def _fetch_and_write_page(
     semaphore: asyncio.Semaphore,
 ) -> str | None:
     async with semaphore:
-        cmd = _build_command(
+        cmd = build_command(
             "wiki-page-show", auth_method,
             org=org, project=project, wiki=wiki_name, path=page_path,
         )
@@ -80,6 +74,26 @@ async def _fetch_and_write_page(
         return None
 
 
+def detect_wiki_deletions(
+    *,
+    remote_paths: set[str],
+    db: Database,
+    data_dir: Path,
+) -> list[str]:
+    """Remove local wiki pages that no longer exist in ADO. Returns deleted paths."""
+    local_paths = set(db.get_all_wiki_paths())
+    orphans = local_paths - remote_paths
+
+    for page_path in orphans:
+        clean = page_path.lstrip("/")
+        file_path = data_dir / "wiki" / f"{clean}.md"
+        if file_path.exists():
+            file_path.unlink()
+        db.delete_wiki_page(page_path)
+
+    return list(orphans)
+
+
 async def sync_wiki(
     *,
     org: str,
@@ -91,7 +105,7 @@ async def sync_wiki(
     max_concurrent: int = 5,
     dry_run: bool = False,
 ) -> dict:
-    cmd = _build_command("wiki-list", auth_method, org=org, project=project)
+    cmd = build_command("wiki-list", auth_method, org=org, project=project)
     result = await run_command(cmd)
     if result.returncode != 0:
         raise RuntimeError(f"Wiki list failed: {result.stderr}")
@@ -105,11 +119,12 @@ async def sync_wiki(
 
     total_fetched = 0
     total_errors = 0
+    all_remote_paths: set[str] = set()
 
     for wiki in wikis:
         wiki_name = wiki["name"]
 
-        cmd = _build_command(
+        cmd = build_command(
             "wiki-page-list", auth_method,
             org=org, project=project, wiki=wiki_name,
         )
@@ -134,22 +149,35 @@ async def sync_wiki(
             click.echo(f"Would fetch {len(pages)} wiki pages from {wiki_name}: {paths[:10]}...")
             continue
 
-        semaphore = asyncio.Semaphore(max_concurrent)
-        tasks = [
-            _fetch_and_write_page(
-                wiki_name, page["path"],
-                auth_method=auth_method, org=org, project=project,
-                data_dir=data_dir, db=db, semaphore=semaphore,
-            )
-            for page in pages
-        ]
+        for page in pages:
+            all_remote_paths.add(page["path"])
 
-        results = await asyncio.gather(*tasks)
-        for err in results:
-            if err is not None:
-                total_errors += 1
-                click.echo(f"  Warning: {err}", err=True)
-            else:
-                total_fetched += 1
+        with db.batch():
+            semaphore = asyncio.Semaphore(max_concurrent)
+            tasks = [
+                _fetch_and_write_page(
+                    wiki_name, page["path"],
+                    auth_method=auth_method, org=org, project=project,
+                    data_dir=data_dir, db=db, semaphore=semaphore,
+                )
+                for page in pages
+            ]
+
+            results = await asyncio.gather(*tasks)
+            for err in results:
+                if err is not None:
+                    total_errors += 1
+                    click.echo(f"  Warning: {err}", err=True)
+                else:
+                    total_fetched += 1
+
+    if not dry_run:
+        deleted = detect_wiki_deletions(
+            remote_paths=all_remote_paths,
+            db=db,
+            data_dir=data_dir,
+        )
+        if deleted:
+            click.echo(f"  Removed {len(deleted)} orphaned wiki pages")
 
     return {"fetched": total_fetched, "errors": total_errors}

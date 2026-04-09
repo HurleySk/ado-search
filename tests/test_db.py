@@ -206,6 +206,23 @@ def test_get_all_wiki_paths(tmp_path):
     db.close()
 
 
+def test_batch_commits_once(tmp_path):
+    db = Database(tmp_path / "index.db")
+    db.initialize()
+    with db.batch():
+        for i in range(10):
+            db.upsert_work_item({
+                "id": i, "title": f"Item {i}", "type": "Task", "state": "Active",
+                "area": "", "iteration": "", "assigned_to": "", "tags": "",
+                "priority": 2, "parent_id": None, "created": "2026-01-01",
+                "updated": "2026-01-01", "description_snippet": f"Item {i}",
+            })
+    # All 10 should be searchable after batch completes
+    ids = db.get_all_work_item_ids()
+    assert len(ids) == 10
+    db.close()
+
+
 def test_search_special_characters(tmp_path):
     db = Database(tmp_path / "index.db")
     db.initialize()

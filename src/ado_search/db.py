@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -15,6 +16,7 @@ class Database:
     def __init__(self, path: Path):
         self._path = path
         self._conn: sqlite3.Connection | None = None
+        self._in_batch: bool = False
 
     def _connect(self) -> sqlite3.Connection:
         if self._conn is None:
@@ -23,6 +25,20 @@ class Database:
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA journal_mode=WAL")
         return self._conn
+
+    @contextmanager
+    def batch(self):
+        """Batch operations into a single transaction. Commits once at the end."""
+        conn = self._connect()
+        self._in_batch = True
+        try:
+            yield
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._in_batch = False
 
     def initialize(self) -> None:
         conn = self._connect()
@@ -88,7 +104,8 @@ class Database:
             "INSERT INTO search_index (item_type, item_id, title, description_snippet, tags) VALUES (?, ?, ?, ?, ?)",
             ("work_item", str(item["id"]), item["title"], item.get("description_snippet", ""), item["tags"]),
         )
-        conn.commit()
+        if not self._in_batch:
+            conn.commit()
 
     def upsert_wiki_page(self, page: dict) -> None:
         conn = self._connect()
@@ -108,7 +125,8 @@ class Database:
             "INSERT INTO search_index (item_type, item_id, title, description_snippet, tags) VALUES (?, ?, ?, ?, ?)",
             ("wiki", page["path"], page["title"], page.get("description_snippet", ""), ""),
         )
-        conn.commit()
+        if not self._in_batch:
+            conn.commit()
 
     def delete_work_item(self, item_id: int) -> None:
         conn = self._connect()
@@ -117,7 +135,8 @@ class Database:
             "DELETE FROM search_index WHERE item_type = 'work_item' AND item_id = ?",
             (str(item_id),),
         )
-        conn.commit()
+        if not self._in_batch:
+            conn.commit()
 
     def delete_wiki_page(self, path: str) -> None:
         conn = self._connect()
@@ -126,7 +145,8 @@ class Database:
             "DELETE FROM search_index WHERE item_type = 'wiki' AND item_id = ?",
             (path,),
         )
-        conn.commit()
+        if not self._in_batch:
+            conn.commit()
 
     def search_work_items(
         self,

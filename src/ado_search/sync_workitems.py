@@ -6,7 +6,7 @@ from pathlib import Path
 
 import click
 
-from ado_search.auth import build_az_cli_command, build_powershell_command
+from ado_search.auth import build_command
 from ado_search.db import Database
 from ado_search.markdown import work_item_to_markdown, extract_work_item_metadata
 from ado_search.runner import run_command, CommandResult
@@ -39,16 +39,10 @@ def build_wiql_query(
     return f"SELECT [System.Id] FROM WorkItems WHERE {where} ORDER BY [System.ChangedDate] DESC"
 
 
-def _build_command(operation: str, auth_method: str, **kwargs) -> list[str]:
-    if auth_method == "az-cli":
-        return build_az_cli_command(operation, **kwargs)
-    return build_powershell_command(operation, **kwargs)
-
-
 async def _fetch_comments(
     work_item_id: int, auth_method: str, org: str, project: str,
 ) -> list[dict]:
-    cmd = _build_command(
+    cmd = build_command(
         "comments", auth_method, org=org, project=project, work_item_id=work_item_id,
     )
     result = await run_command(cmd)
@@ -73,7 +67,7 @@ async def _fetch_and_write_item(
 ) -> str | None:
     """Fetch a single work item and write it. Returns error message or None."""
     async with semaphore:
-        cmd = _build_command(
+        cmd = build_command(
             "show", auth_method, org=org, project=project, work_item_id=item_id,
         )
         result = await run_command(cmd)
@@ -138,7 +132,7 @@ async def sync_work_items(
         last_sync=last_sync,
     )
 
-    cmd = _build_command("query", auth_method, org=org, project=project, wiql=wiql)
+    cmd = build_command("query", auth_method, org=org, project=project, wiql=wiql)
     result = await run_command(cmd)
     if result.returncode != 0:
         raise RuntimeError(f"WIQL query failed: {result.stderr}")
@@ -150,35 +144,36 @@ async def sync_work_items(
         click.echo(f"Would fetch {len(item_ids)} work items: {item_ids[:20]}...")
         return {"fetched": 0, "errors": 0, "dry_run": True, "would_fetch": len(item_ids)}
 
-    semaphore = asyncio.Semaphore(max_concurrent)
-    tasks = [
-        _fetch_and_write_item(
-            item_id,
-            auth_method=auth_method,
-            org=org,
-            project=project,
-            data_dir=data_dir,
-            db=db,
-            semaphore=semaphore,
-        )
-        for item_id in item_ids
-    ]
+    with db.batch():
+        semaphore = asyncio.Semaphore(max_concurrent)
+        tasks = [
+            _fetch_and_write_item(
+                item_id,
+                auth_method=auth_method,
+                org=org,
+                project=project,
+                data_dir=data_dir,
+                db=db,
+                semaphore=semaphore,
+            )
+            for item_id in item_ids
+        ]
 
-    errors: list[str] = []
-    results = await asyncio.gather(*tasks)
-    for err in results:
-        if err is not None:
-            errors.append(err)
-            click.echo(f"  Warning: {err}", err=True)
+        errors: list[str] = []
+        results = await asyncio.gather(*tasks)
+        for err in results:
+            if err is not None:
+                errors.append(err)
+                click.echo(f"  Warning: {err}", err=True)
 
-    # Detect deletions only on full sync (incremental doesn't have all IDs)
-    if not dry_run and not last_sync:
-        deleted = detect_deletions(
-            remote_ids=set(item_ids),
-            db=db,
-            data_dir=data_dir,
-        )
-        if deleted:
-            click.echo(f"  Removed {len(deleted)} orphaned items")
+        # Detect deletions only on full sync (incremental doesn't have all IDs)
+        if not last_sync:
+            deleted = detect_deletions(
+                remote_ids=set(item_ids),
+                db=db,
+                data_dir=data_dir,
+            )
+            if deleted:
+                click.echo(f"  Removed {len(deleted)} orphaned items")
 
     return {"fetched": len(item_ids) - len(errors), "errors": len(errors)}

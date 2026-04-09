@@ -128,3 +128,10 @@ def _escape_ps(s: str | None) -> str:
     if s is None:
         return ""
     return s.replace('"', '`"').replace("'", "''")
+
+
+def build_command(operation: str, auth_method: str, **kwargs) -> list[str]:
+    """Dispatch to az-cli or PowerShell command builder based on auth method."""
+    if auth_method == "az-cli":
+        return build_az_cli_command(operation, **kwargs)
+    return build_powershell_command(operation, **kwargs)

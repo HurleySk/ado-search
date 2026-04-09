@@ -30,6 +30,32 @@ def test_flatten_wiki_pages():
     assert "/" not in paths
 
 
+def test_wiki_deletion_detection(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    wiki_dir = data_dir / "wiki"
+    wiki_dir.mkdir(parents=True)
+
+    db = Database(data_dir / "index.db")
+    db.initialize()
+
+    db.upsert_wiki_page({
+        "path": "/Old-Page", "title": "Old Page", "updated": "2026-01-01",
+        "description_snippet": "Orphaned page",
+    })
+    (wiki_dir / "Old-Page.md").write_text("old content")
+
+    from ado_search.sync_wiki import detect_wiki_deletions
+    deleted = detect_wiki_deletions(
+        remote_paths={"/Current-Page"},
+        db=db,
+        data_dir=data_dir,
+    )
+    assert "/Old-Page" in deleted
+    assert not (wiki_dir / "Old-Page.md").exists()
+    assert db.search_wiki("Old") == []
+    db.close()
+
+
 def test_sync_wiki_writes_files_and_indexes(tmp_path):
     data_dir = tmp_path / ".ado-search"
     data_dir.mkdir()

@@ -1,0 +1,21 @@
+{
+  "id": 12346,
+  "fields": {
+    "System.Title": "Add MFA support to login flow",
+    "System.WorkItemType": "User Story",
+    "System.State": "New",
+    "System.AreaPath": "MyProject\\Auth",
+    "System.IterationPath": "MyProject\\Sprint 43",
+    "System.AssignedTo": {
+      "uniqueName": "alice@contoso.com",
+      "displayName": "Alice Smith"
+    },
+    "System.Tags": "mfa; authentication",
+    "Microsoft.VSTS.Common.Priority": 2,
+    "System.Parent": null,
+    "System.CreatedDate": "2026-04-01T09:00:00Z",
+    "System.ChangedDate": "2026-04-05T11:00:00Z",
+    "System.Description": "<p>As a user, I want MFA support so that my account is more secure.</p>",
+    "Microsoft.VSTS.Common.AcceptanceCriteria": "<p>MFA can be enabled in account settings</p>"
+  }
+}

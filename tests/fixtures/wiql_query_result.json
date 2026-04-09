@@ -1,0 +1,6 @@
+{
+  "workItems": [
+    {"id": 12345, "url": "https://dev.azure.com/contoso/MyProject/_apis/wit/workItems/12345"},
+    {"id": 12346, "url": "https://dev.azure.com/contoso/MyProject/_apis/wit/workItems/12346"}
+  ]
+}

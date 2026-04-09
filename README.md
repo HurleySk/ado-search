@@ -5,11 +5,13 @@ Sync and search Azure DevOps work items and wiki pages locally for AI agents.
 ## Install
 
 ```bash
-# From git
-pip install git+https://dev.azure.com/pcxhub-acms/Aquila/_git/ado-search
+pip install ado-search
+```
 
-# Or from a local clone
-pip install .
+Or from source:
+
+```bash
+pip install git+https://github.com/HurleySk/ado-search.git
 ```
 
 ## Quick Start

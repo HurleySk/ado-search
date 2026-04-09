@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68.0", "setuptools-scm"]
+requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,11 +8,29 @@ version = "0.1.0"
 description = "Sync and search Azure DevOps work items and wiki pages for AI agents"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
+authors = [{name = "Samuel Hurley"}]
+keywords = ["azure-devops", "search", "work-items", "wiki", "agents"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
 dependencies = [
     "click>=8.0",
     "tomli>=2.0; python_version < '3.11'",
 ]
+
+[project.urls]
+Homepage = "https://github.com/HurleySk/ado-search"
+Repository = "https://github.com/HurleySk/ado-search"
+Issues = "https://github.com/HurleySk/ado-search/issues"
 
 [project.optional-dependencies]
 dev = [

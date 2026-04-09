@@ -12,6 +12,7 @@ def build_az_cli_command(
     work_item_id: int | None = None,
     wiki: str | None = None,
     path: str | None = None,
+    url: str | None = None,
 ) -> list[str]:
     base = ["az"]
 
@@ -59,6 +60,12 @@ def build_az_cli_command(
                 "--api-version", "7.1-preview.4",
                 "--output", "json"]
 
+    if operation == "odata-query":
+        return [*base, "rest", "--method", "get",
+                "--resource", ADO_RESOURCE_ID,
+                "--url", url,
+                "--output", "json"]
+
     raise ValueError(f"Unknown operation: {operation}")
 
 
@@ -71,6 +78,7 @@ def build_powershell_command(
     work_item_id: int | None = None,
     wiki: str | None = None,
     path: str | None = None,
+    url: str | None = None,
 ) -> list[str]:
     token_expr = f"(Get-AzAccessToken -ResourceUrl '{ADO_RESOURCE_ID}').Token"
     headers = '@{Authorization = "Bearer $token"; "Content-Type" = "application/json"}'
@@ -124,6 +132,13 @@ def build_powershell_command(
             f"$token = {token_expr}; "
             f"$headers = {headers}; "
             f"Invoke-RestMethod -Uri '{api_url}' -Method Get -Headers $headers | ConvertTo-Json -Depth 10"
+        )
+    elif operation == "odata-query":
+        safe_url = _escape_ps(url)
+        script = (
+            f"$token = {token_expr}; "
+            f"$headers = {headers}; "
+            f"Invoke-RestMethod -Uri '{safe_url}' -Method Get -Headers $headers | ConvertTo-Json -Depth 10"
         )
     else:
         raise ValueError(f"Unknown operation: {operation}")

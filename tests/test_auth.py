@@ -54,6 +54,33 @@ def test_build_az_cli_command_wiki_list():
     assert "list" in cmd
 
 
+def test_build_az_cli_command_odata_query():
+    cmd = build_az_cli_command(
+        "odata-query",
+        url="https://analytics.dev.azure.com/contoso/MyProject/_odata/v4.0-preview/WorkItems?$top=100",
+        org="https://dev.azure.com/contoso",
+        project="MyProject",
+    )
+    assert cmd[0] == "az"
+    assert "rest" in cmd
+    assert "--url" in cmd
+    url = cmd[cmd.index("--url") + 1]
+    assert "analytics.dev.azure.com" in url
+
+
+def test_build_powershell_command_odata_query():
+    cmd = build_powershell_command(
+        "odata-query",
+        url="https://analytics.dev.azure.com/contoso/MyProject/_odata/v4.0-preview/WorkItems?$top=100",
+        org="https://dev.azure.com/contoso",
+        project="MyProject",
+    )
+    assert cmd[0] == "pwsh"
+    ps_script = cmd[cmd.index("-Command") + 1]
+    assert "Invoke-RestMethod" in ps_script
+    assert "analytics.dev.azure.com" in ps_script
+
+
 def test_build_az_cli_command_wiki_page_show():
     cmd = build_az_cli_command(
         "wiki-page-show",

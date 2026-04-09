@@ -268,6 +268,27 @@ async def sync_work_items(
     max_concurrent: int = 5,
     dry_run: bool = False,
 ) -> dict:
+    # Try OData analytics fast path
+    from ado_search.sync_odata import sync_via_odata
+
+    click.echo("  Trying OData analytics (fast path)...")
+    odata_result = await sync_via_odata(
+        org=org, project=project, auth_method=auth_method,
+        data_dir=data_dir, db=db,
+        work_item_types=work_item_types, area_paths=area_paths,
+        states=states, last_sync=last_sync, dry_run=dry_run,
+    )
+
+    if odata_result is not None:
+        fetched_ids = odata_result.pop("fetched_ids", set())
+        if not dry_run and not last_sync:
+            deleted = detect_deletions(remote_ids=fetched_ids, db=db, data_dir=data_dir)
+            if deleted:
+                click.echo(f"  Removed {len(deleted)} orphaned items")
+        return odata_result
+
+    click.echo("  OData not available, using WIQL fallback...")
+
     item_ids = await _discover_work_item_ids(
         auth_method=auth_method,
         org=org,

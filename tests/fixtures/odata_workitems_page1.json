@@ -1,0 +1,37 @@
+{
+  "@odata.context": "https://analytics.dev.azure.com/contoso/MyProject/_odata/v4.0-preview/$metadata#WorkItems",
+  "value": [
+    {
+      "WorkItemId": 12345,
+      "Title": "Login fails with SSO redirect",
+      "WorkItemType": "Bug",
+      "State": "Active",
+      "Priority": 1,
+      "TagNames": "sso,authentication,p1",
+      "CreatedDate": "2026-03-15T10:00:00Z",
+      "ChangedDate": "2026-04-01T14:30:00Z",
+      "Description": "<p>When a user attempts to log in via SSO, the redirect fails with a 403 error.</p>",
+      "Microsoft_VSTS_Common_AcceptanceCriteria": "<p>SSO redirect completes successfully</p>",
+      "ParentWorkItemId": 12300,
+      "Area": {"AreaPath": "MyProject\\Auth"},
+      "Iteration": {"IterationPath": "MyProject\\Sprint 42"},
+      "AssignedTo": {"UniqueName": "jdoe@contoso.com"}
+    },
+    {
+      "WorkItemId": 12346,
+      "Title": "Add MFA support",
+      "WorkItemType": "User Story",
+      "State": "New",
+      "Priority": 2,
+      "TagNames": "mfa,authentication",
+      "CreatedDate": "2026-04-01T09:00:00Z",
+      "ChangedDate": "2026-04-05T11:00:00Z",
+      "Description": "<p>As a user, I want MFA support.</p>",
+      "Microsoft_VSTS_Common_AcceptanceCriteria": "",
+      "ParentWorkItemId": null,
+      "Area": {"AreaPath": "MyProject\\Auth"},
+      "Iteration": {"IterationPath": "MyProject\\Sprint 43"},
+      "AssignedTo": null
+    }
+  ]
+}

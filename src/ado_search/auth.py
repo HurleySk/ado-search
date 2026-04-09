@@ -68,8 +68,12 @@ def build_powershell_command(
     token_expr = f"(Get-AzAccessToken -ResourceUrl '{ADO_RESOURCE_ID}').Token"
     headers = '@{Authorization = "Bearer $token"; "Content-Type" = "application/json"}'
 
+    safe_org = _escape_ps(org)
+    safe_project = _escape_ps(project)
+    safe_wiki = _escape_ps(wiki)
+
     if operation == "query":
-        api_url = f"{org}/{project}/_apis/wit/wiql?api-version=7.1"
+        api_url = f"{safe_org}/{safe_project}/_apis/wit/wiql?api-version=7.1"
         body = '{{"query": "{wiql}"}}'.replace("{wiql}", _escape_ps(wiql))
         script = (
             f"$token = {token_expr}; "
@@ -78,36 +82,37 @@ def build_powershell_command(
             f"Invoke-RestMethod -Uri '{api_url}' -Method Post -Headers $headers -Body $body | ConvertTo-Json -Depth 10"
         )
     elif operation == "show":
-        api_url = f"{org}/{project}/_apis/wit/workitems/{work_item_id}?$expand=all&api-version=7.1"
+        api_url = f"{safe_org}/{safe_project}/_apis/wit/workitems/{work_item_id}?$expand=all&api-version=7.1"
         script = (
             f"$token = {token_expr}; "
             f"$headers = {headers}; "
             f"Invoke-RestMethod -Uri '{api_url}' -Method Get -Headers $headers | ConvertTo-Json -Depth 10"
         )
     elif operation == "wiki-list":
-        api_url = f"{org}/{project}/_apis/wiki/wikis?api-version=7.1"
+        api_url = f"{safe_org}/{safe_project}/_apis/wiki/wikis?api-version=7.1"
         script = (
             f"$token = {token_expr}; "
             f"$headers = {headers}; "
             f"Invoke-RestMethod -Uri '{api_url}' -Method Get -Headers $headers | ConvertTo-Json -Depth 10"
         )
     elif operation == "wiki-page-list":
-        api_url = f"{org}/{project}/_apis/wiki/wikis/{wiki}/pages?recursionLevel=full&api-version=7.1"
+        api_url = f"{safe_org}/{safe_project}/_apis/wiki/wikis/{safe_wiki}/pages?recursionLevel=full&api-version=7.1"
         script = (
             f"$token = {token_expr}; "
             f"$headers = {headers}; "
             f"Invoke-RestMethod -Uri '{api_url}' -Method Get -Headers $headers | ConvertTo-Json -Depth 10"
         )
     elif operation == "wiki-page-show":
-        encoded_path = path.replace("/", "%2F") if path else ""
-        api_url = f"{org}/{project}/_apis/wiki/wikis/{wiki}/pages?path={encoded_path}&includeContent=true&api-version=7.1"
+        safe_path = _escape_ps(path)
+        encoded_path = safe_path.replace("/", "%2F") if safe_path else ""
+        api_url = f"{safe_org}/{safe_project}/_apis/wiki/wikis/{safe_wiki}/pages?path={encoded_path}&includeContent=true&api-version=7.1"
         script = (
             f"$token = {token_expr}; "
             f"$headers = {headers}; "
             f"Invoke-RestMethod -Uri '{api_url}' -Method Get -Headers $headers | ConvertTo-Json -Depth 10"
         )
     elif operation == "comments":
-        api_url = f"{org}/{project}/_apis/wit/workitems/{work_item_id}/comments?api-version=7.1-preview.4"
+        api_url = f"{safe_org}/{safe_project}/_apis/wit/workitems/{work_item_id}/comments?api-version=7.1-preview.4"
         script = (
             f"$token = {token_expr}; "
             f"$headers = {headers}; "

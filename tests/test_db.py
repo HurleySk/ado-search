@@ -204,3 +204,22 @@ def test_get_all_wiki_paths(tmp_path):
     paths = db.get_all_wiki_paths()
     assert sorted(paths) == ["/Page-A", "/Page-B"]
     db.close()
+
+
+def test_search_special_characters(tmp_path):
+    db = Database(tmp_path / "index.db")
+    db.initialize()
+    db.upsert_work_item({
+        "id": 1, "title": "Test item", "type": "Bug", "state": "Active",
+        "area": "", "iteration": "", "assigned_to": "", "tags": "",
+        "priority": 1, "parent_id": None, "created": "2026-01-01",
+        "updated": "2026-01-01", "description_snippet": "test",
+    })
+    # These should not crash
+    results = db.search_work_items('he said "hello')
+    assert isinstance(results, list)
+    results = db.search_work_items("foo AND bar")
+    assert isinstance(results, list)
+    results = db.search_work_items("test*")
+    assert isinstance(results, list)
+    db.close()

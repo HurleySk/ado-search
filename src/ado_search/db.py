@@ -4,6 +4,13 @@ import sqlite3
 from pathlib import Path
 
 
+def _sanitize_fts_query(query: str) -> str:
+    """Quote each token to prevent FTS5 syntax injection."""
+    tokens = query.split()
+    # Escape any double-quotes inside the token by doubling them, then wrap in quotes
+    return " ".join(f'"{t.replace(chr(34), chr(34) + chr(34))}"' for t in tokens if t)
+
+
 class Database:
     def __init__(self, path: Path):
         self._path = path
@@ -142,7 +149,7 @@ class Database:
             WHERE s.item_type = 'work_item'
               AND search_index MATCH ?
         """
-        params: list = [query]
+        params: list = [_sanitize_fts_query(query)]
 
         if type_filter:
             sql += " AND w.type = ?"
@@ -178,7 +185,7 @@ class Database:
             ORDER BY rank
             LIMIT ?
             """,
-            (query, limit),
+            (_sanitize_fts_query(query), limit),
         ).fetchall()
         return [dict(row) for row in rows]
 

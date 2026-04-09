@@ -171,4 +171,14 @@ async def sync_work_items(
             errors.append(err)
             click.echo(f"  Warning: {err}", err=True)
 
+    # Detect deletions only on full sync (incremental doesn't have all IDs)
+    if not dry_run and not last_sync:
+        deleted = detect_deletions(
+            remote_ids=set(item_ids),
+            db=db,
+            data_dir=data_dir,
+        )
+        if deleted:
+            click.echo(f"  Removed {len(deleted)} orphaned items")
+
     return {"fetched": len(item_ids) - len(errors), "errors": len(errors)}

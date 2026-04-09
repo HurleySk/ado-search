@@ -169,7 +169,7 @@ def show(item_id: str, data_dir: str | None):
         click.echo(wi_path.read_text(encoding="utf-8"))
         return
 
-    wiki_path = data_path / "wiki" / f"{item_id}.md"
+    wiki_path = data_path / "wiki" / f"{item_id.lstrip('/')}.md"
     if wiki_path.exists():
         click.echo(wiki_path.read_text(encoding="utf-8"))
         return

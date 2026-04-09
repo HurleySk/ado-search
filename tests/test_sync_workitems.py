@@ -21,7 +21,9 @@ def test_build_wiql_query_full_sync():
     assert "System.WorkItemType" in q
     assert "'Bug'" in q
     assert "'User Story'" in q
-    assert "ChangedDate" not in q
+    # ChangedDate should only appear in ORDER BY, not in WHERE (no incremental filter)
+    assert "ChangedDate >" not in q
+    assert "ORDER BY [System.ChangedDate] DESC" in q
 
 
 def test_build_wiql_query_incremental():
@@ -63,16 +65,16 @@ def test_sync_work_items_writes_files_and_indexes(tmp_path):
     item_12346 = (FIXTURE_DIR / "work_item_12346.json").read_text()
     comments_json = json.dumps({"comments": []})
 
-    call_count = {"n": 0}
-    responses = [wiql_result, item_12345, comments_json, item_12346, comments_json]
-
     async def fake_run(cmd, **kwargs):
-        idx = call_count["n"]
-        call_count["n"] += 1
-        return CommandResult(
-            command=cmd, returncode=0,
-            stdout=responses[idx], stderr="",
-        )
+        cmd_str = " ".join(str(c) for c in cmd)
+        if "query" in cmd_str and "--wiql" in cmd_str:
+            return CommandResult(command=cmd, returncode=0, stdout=wiql_result, stderr="")
+        if "12345" in cmd_str and "comments" not in cmd_str:
+            return CommandResult(command=cmd, returncode=0, stdout=item_12345, stderr="")
+        if "12346" in cmd_str and "comments" not in cmd_str:
+            return CommandResult(command=cmd, returncode=0, stdout=item_12346, stderr="")
+        # Comments requests
+        return CommandResult(command=cmd, returncode=0, stdout=comments_json, stderr="")
 
     with patch("ado_search.sync_workitems.run_command", side_effect=fake_run):
         stats = asyncio.run(sync_work_items(

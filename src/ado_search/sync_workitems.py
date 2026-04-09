@@ -36,8 +36,7 @@ def build_wiql_query(
         conditions.append(f"[System.State] IN ({state_clause})")
 
     where = " AND ".join(conditions)
-    order_by = "[System.ChangedDate] DESC" if last_sync else "[System.Id] DESC"
-    return f"SELECT [System.Id] FROM WorkItems WHERE {where} ORDER BY {order_by}"
+    return f"SELECT [System.Id] FROM WorkItems WHERE {where} ORDER BY [System.ChangedDate] DESC"
 
 
 def _build_command(operation: str, auth_method: str, **kwargs) -> list[str]:

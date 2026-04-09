@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 from dataclasses import dataclass
 
 
@@ -15,10 +16,14 @@ class CommandResult:
 async def run_command(
     cmd: list[str], *, timeout: float = 120, retries: int = 3,
 ) -> CommandResult:
+    # Resolve the executable via PATH (handles Windows .cmd/.bat extensions)
+    resolved = shutil.which(cmd[0])
+    exec_cmd = [resolved, *cmd[1:]] if resolved else cmd
+
     last_result: CommandResult | None = None
     for attempt in range(retries):
         proc = await asyncio.create_subprocess_exec(
-            *cmd,
+            *exec_cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

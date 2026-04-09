@@ -105,7 +105,7 @@ def sync(data_dir: str | None, dry_run: bool):
         click.echo(f"  Wiki pages: {wiki_stats['fetched']} synced, {wiki_stats['errors']} errors")
 
         if not dry_run:
-            cfg["sync"]["last_sync"] = datetime.now(timezone.utc).isoformat()
+            cfg["sync"]["last_sync"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             save_config(cfg, config_path)
             click.echo("Sync complete.")
 

@@ -24,7 +24,7 @@ def build_az_cli_command(
     if operation == "show":
         return [*base, "boards", "work-item", "show",
                 "--id", str(work_item_id),
-                "--org", org, "--project", project,
+                "--org", org,
                 "--output", "json"]
 
     if operation == "wiki-list":
@@ -48,7 +48,7 @@ def build_az_cli_command(
         return [*base, "devops", "invoke",
                 "--area", "wit", "--resource", "comments",
                 "--route-parameters", f"id={work_item_id}",
-                "--org", org, "--project", project,
+                "--org", org,
                 "--api-version", "7.1-preview.4",
                 "--output", "json"]
 

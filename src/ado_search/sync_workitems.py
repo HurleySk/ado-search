@@ -21,10 +21,15 @@ def build_wiql_query(
     area_paths: list[str],
     states: list[str],
     last_sync: str,
+    project: str = "",
     min_id: int = 0,
+    max_id: int = 0,
 ) -> str:
     types_clause = ", ".join(f"'{t}'" for t in work_item_types)
     conditions = [f"[System.WorkItemType] IN ({types_clause})"]
+
+    if project:
+        conditions.append(f"[System.TeamProject] = '{project}'")
 
     if last_sync:
         conditions.append(f"[System.ChangedDate] > '{last_sync}'")
@@ -41,6 +46,9 @@ def build_wiql_query(
 
     if min_id > 0:
         conditions.append(f"[System.Id] > {min_id}")
+
+    if max_id > 0:
+        conditions.append(f"[System.Id] <= {max_id}")
 
     where = " AND ".join(conditions)
     return f"SELECT [System.Id] FROM WorkItems WHERE {where} ORDER BY [System.Id] ASC"
@@ -118,6 +126,22 @@ def detect_deletions(
     return list(orphans)
 
 
+ID_CHUNK_SIZE = 10000  # query in chunks of 10K IDs to stay under the 20K result limit
+
+
+def _parse_query_result(stdout: str) -> list[int]:
+    """Parse work item IDs from az boards query output."""
+    if not stdout.strip():
+        return []
+    data = json.loads(stdout)
+    # az CLI returns a flat list; REST API returns {"workItems": [...]}
+    if isinstance(data, list):
+        items = data
+    else:
+        items = data.get("workItems", [])
+    return [wi["id"] for wi in items]
+
+
 async def _discover_work_item_ids(
     *,
     auth_method: str,
@@ -128,37 +152,105 @@ async def _discover_work_item_ids(
     states: list[str],
     last_sync: str,
 ) -> list[int]:
-    """Discover all work item IDs, paginating if needed."""
-    all_ids: list[int] = []
-    min_id = 0
+    """Discover all work item IDs, paginating by ID range to avoid the 20K WIQL limit."""
+    # First, try without chunking (works for incremental syncs and small repos)
+    wiql = build_wiql_query(
+        work_item_types=work_item_types,
+        area_paths=area_paths,
+        states=states,
+        last_sync=last_sync,
+        project=project,
+    )
+    cmd = build_command("query", auth_method, org=org, project=project, wiql=wiql)
+    result = await run_command(cmd)
 
-    while True:
+    if result.returncode == 0:
+        ids = _parse_query_result(result.stdout)
+        click.echo(f"  Found {len(ids)} work items")
+        return ids
+
+    # If we hit the 20K limit, paginate by ID ranges
+    if "VS402337" not in result.stderr:
+        raise RuntimeError(f"WIQL query failed: {result.stderr}")
+
+    click.echo("  Large dataset detected, paginating by ID range...")
+
+    # Find the ID boundaries first
+    # Get min ID
+    wiql_min = build_wiql_query(
+        work_item_types=work_item_types, area_paths=area_paths,
+        states=states, last_sync=last_sync, project=project,
+    )
+    # Use a small probe to find the first item
+    for probe_start in range(0, 200000, ID_CHUNK_SIZE):
+        probe_wiql = build_wiql_query(
+            work_item_types=work_item_types, area_paths=area_paths,
+            states=states, last_sync=last_sync, project=project,
+            min_id=probe_start, max_id=probe_start + ID_CHUNK_SIZE,
+        )
+        cmd = build_command("query", auth_method, org=org, project=project, wiql=probe_wiql)
+        probe_result = await run_command(cmd)
+        if probe_result.returncode == 0:
+            probe_ids = _parse_query_result(probe_result.stdout)
+            if probe_ids:
+                range_start = min(probe_ids)
+                click.echo(f"  First items found at ID ~{range_start}")
+                break
+    else:
+        click.echo("  Could not find any work items in ID range 0-200000")
+        return []
+
+    # Now paginate from the discovered start
+    all_ids: list[int] = []
+    min_id = range_start - 1  # start just before the first known ID
+    empty_chunks = 0
+
+    while empty_chunks < 3:
         wiql = build_wiql_query(
             work_item_types=work_item_types,
             area_paths=area_paths,
             states=states,
             last_sync=last_sync,
+            project=project,
             min_id=min_id,
+            max_id=min_id + ID_CHUNK_SIZE,
         )
         cmd = build_command("query", auth_method, org=org, project=project, wiql=wiql)
         result = await run_command(cmd)
+
         if result.returncode != 0:
+            if "VS402337" in result.stderr:
+                click.echo(f"    Chunk {min_id}-{min_id + ID_CHUNK_SIZE} too large, halving...")
+                # Halve the chunk to fit under the limit
+                half = ID_CHUNK_SIZE // 2
+                for sub_start in [min_id, min_id + half]:
+                    sub_wiql = build_wiql_query(
+                        work_item_types=work_item_types, area_paths=area_paths,
+                        states=states, last_sync=last_sync, project=project,
+                        min_id=sub_start, max_id=sub_start + half,
+                    )
+                    sub_cmd = build_command("query", auth_method, org=org, project=project, wiql=sub_wiql)
+                    sub_result = await run_command(sub_cmd)
+                    if sub_result.returncode == 0:
+                        all_ids.extend(_parse_query_result(sub_result.stdout))
+                min_id += ID_CHUNK_SIZE
+                empty_chunks = 0
+                continue
             raise RuntimeError(f"WIQL query failed: {result.stderr}")
 
-        data = json.loads(result.stdout)
-        page_ids = [wi["id"] for wi in data.get("workItems", [])]
+        page_ids = _parse_query_result(result.stdout)
 
         if not page_ids:
-            break
+            empty_chunks += 1
+            min_id += ID_CHUNK_SIZE
+            continue
 
+        empty_chunks = 0
         all_ids.extend(page_ids)
-        click.echo(f"  Discovered {len(all_ids)} work items so far...")
+        click.echo(f"  Discovered {len(all_ids)} work items so far (IDs {min_id+1}-{min_id + ID_CHUNK_SIZE})...")
+        min_id += ID_CHUNK_SIZE
 
-        if len(page_ids) < WIQL_PAGE_SIZE:
-            break
-
-        min_id = max(page_ids)
-
+    click.echo(f"  Found {len(all_ids)} total work items")
     return all_ids
 
 

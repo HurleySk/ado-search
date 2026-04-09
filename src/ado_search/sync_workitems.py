@@ -12,12 +12,16 @@ from ado_search.markdown import work_item_to_markdown, extract_work_item_metadat
 from ado_search.runner import run_command, CommandResult
 
 
+WIQL_PAGE_SIZE = 20000
+
+
 def build_wiql_query(
     *,
     work_item_types: list[str],
     area_paths: list[str],
     states: list[str],
     last_sync: str,
+    min_id: int = 0,
 ) -> str:
     types_clause = ", ".join(f"'{t}'" for t in work_item_types)
     conditions = [f"[System.WorkItemType] IN ({types_clause})"]
@@ -35,8 +39,11 @@ def build_wiql_query(
         state_clause = ", ".join(f"'{s}'" for s in states)
         conditions.append(f"[System.State] IN ({state_clause})")
 
+    if min_id > 0:
+        conditions.append(f"[System.Id] > {min_id}")
+
     where = " AND ".join(conditions)
-    return f"SELECT [System.Id] FROM WorkItems WHERE {where} ORDER BY [System.ChangedDate] DESC"
+    return f"SELECT [System.Id] FROM WorkItems WHERE {where} ORDER BY [System.Id] ASC"
 
 
 async def _fetch_comments(
@@ -111,6 +118,50 @@ def detect_deletions(
     return list(orphans)
 
 
+async def _discover_work_item_ids(
+    *,
+    auth_method: str,
+    org: str,
+    project: str,
+    work_item_types: list[str],
+    area_paths: list[str],
+    states: list[str],
+    last_sync: str,
+) -> list[int]:
+    """Discover all work item IDs, paginating if needed."""
+    all_ids: list[int] = []
+    min_id = 0
+
+    while True:
+        wiql = build_wiql_query(
+            work_item_types=work_item_types,
+            area_paths=area_paths,
+            states=states,
+            last_sync=last_sync,
+            min_id=min_id,
+        )
+        cmd = build_command("query", auth_method, org=org, project=project, wiql=wiql)
+        result = await run_command(cmd)
+        if result.returncode != 0:
+            raise RuntimeError(f"WIQL query failed: {result.stderr}")
+
+        data = json.loads(result.stdout)
+        page_ids = [wi["id"] for wi in data.get("workItems", [])]
+
+        if not page_ids:
+            break
+
+        all_ids.extend(page_ids)
+        click.echo(f"  Discovered {len(all_ids)} work items so far...")
+
+        if len(page_ids) < WIQL_PAGE_SIZE:
+            break
+
+        min_id = max(page_ids)
+
+    return all_ids
+
+
 async def sync_work_items(
     *,
     org: str,
@@ -125,20 +176,17 @@ async def sync_work_items(
     max_concurrent: int = 5,
     dry_run: bool = False,
 ) -> dict:
-    wiql = build_wiql_query(
+    item_ids = await _discover_work_item_ids(
+        auth_method=auth_method,
+        org=org,
+        project=project,
         work_item_types=work_item_types,
         area_paths=area_paths,
         states=states,
         last_sync=last_sync,
     )
 
-    cmd = build_command("query", auth_method, org=org, project=project, wiql=wiql)
-    result = await run_command(cmd)
-    if result.returncode != 0:
-        raise RuntimeError(f"WIQL query failed: {result.stderr}")
-
-    data = json.loads(result.stdout)
-    item_ids = [wi["id"] for wi in data.get("workItems", [])]
+    click.echo(f"  Found {len(item_ids)} work items to sync")
 
     if dry_run:
         click.echo(f"Would fetch {len(item_ids)} work items: {item_ids[:20]}...")

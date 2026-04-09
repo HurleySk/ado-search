@@ -21,9 +21,9 @@ def test_build_wiql_query_full_sync():
     assert "System.WorkItemType" in q
     assert "'Bug'" in q
     assert "'User Story'" in q
-    # ChangedDate should only appear in ORDER BY, not in WHERE (no incremental filter)
+    # ChangedDate should only appear in WHERE for incremental, not in full sync
     assert "ChangedDate >" not in q
-    assert "ORDER BY [System.ChangedDate] DESC" in q
+    assert "ORDER BY [System.Id] ASC" in q
 
 
 def test_build_wiql_query_incremental():
@@ -35,6 +35,19 @@ def test_build_wiql_query_incremental():
     )
     assert "ChangedDate" in q
     assert "2026-04-01T00:00:00Z" in q
+    assert "ORDER BY [System.Id] ASC" in q
+
+
+def test_build_wiql_query_with_min_id():
+    q = build_wiql_query(
+        work_item_types=["Bug"],
+        area_paths=[],
+        states=[],
+        last_sync="",
+        min_id=5000,
+    )
+    assert "[System.Id] > 5000" in q
+    assert "ORDER BY [System.Id] ASC" in q
 
 
 def test_build_wiql_query_with_filters():

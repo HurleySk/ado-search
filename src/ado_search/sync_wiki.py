@@ -135,12 +135,17 @@ async def sync_wiki(
             continue
 
         tree = json.loads(result.stdout)
+        # REST API returns root page directly; az CLI may wrap in {"value": [...]}
+        # or {"page": {...}}
+        if isinstance(tree, dict) and "page" in tree:
+            tree = tree["page"]
         if isinstance(tree, dict) and "value" in tree:
             pages_list = []
             for item in tree["value"]:
-                pages_list.append(item)
+                if item.get("path") and item["path"] != "/":
+                    pages_list.append(item)
                 pages_list.extend(_flatten_wiki_pages(item))
-            pages = [p for p in pages_list if p.get("path") and p["path"] != "/"]
+            pages = pages_list
         else:
             pages = _flatten_wiki_pages(tree)
 

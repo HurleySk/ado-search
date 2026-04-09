@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 from dataclasses import dataclass
 
@@ -22,10 +23,13 @@ async def run_command(
 
     last_result: CommandResult | None = None
     for attempt in range(retries):
+        # Prevent MSYS/Git Bash from mangling paths like "/" → "C:/Program Files/Git/"
+        env = {**os.environ, "MSYS_NO_PATHCONV": "1"}
         proc = await asyncio.create_subprocess_exec(
             *exec_cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(

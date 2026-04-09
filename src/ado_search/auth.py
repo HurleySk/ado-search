@@ -33,15 +33,22 @@ def build_az_cli_command(
                 "--output", "json"]
 
     if operation == "wiki-page-list":
-        return [*base, "devops", "wiki", "page", "list",
-                "--wiki", wiki,
-                "--org", org, "--project", project,
+        # az devops wiki page show doesn't return subPages recursively,
+        # so use az rest with the wiki pages API and recursionLevel=full
+        # Note: & must be escaped for Windows cmd.exe batch file processing
+        api_url = f"{org}/{project}/_apis/wiki/wikis/{wiki}/pages"
+        return [*base, "rest", "--method", "get",
+                "--resource", ADO_RESOURCE_ID,
+                "--url", api_url,
+                "--url-parameters", "path=/", "recursionLevel=full", "api-version=7.1",
                 "--output", "json"]
 
     if operation == "wiki-page-show":
-        return [*base, "devops", "wiki", "page", "show",
-                "--wiki", wiki, "--path", path,
-                "--org", org, "--project", project,
+        api_url = f"{org}/{project}/_apis/wiki/wikis/{wiki}/pages"
+        return [*base, "rest", "--method", "get",
+                "--resource", ADO_RESOURCE_ID,
+                "--url", api_url,
+                "--url-parameters", f"path={path}", "includeContent=true", "api-version=7.1",
                 "--output", "json"]
 
     if operation == "comments":

@@ -1,0 +1,119 @@
+from __future__ import annotations
+
+import re
+from html.parser import HTMLParser
+
+
+class _HTMLStripper(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self._parts: list[str] = []
+        self._last_tag: str = ""
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("p", "div", "br", "li") and self._parts:
+            self._parts.append("\n")
+        self._last_tag = tag
+
+    def handle_data(self, data):
+        self._parts.append(data)
+
+    def get_text(self) -> str:
+        text = "".join(self._parts)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+
+def strip_html(html: str) -> str:
+    if not html:
+        return ""
+    stripper = _HTMLStripper()
+    stripper.feed(html)
+    return stripper.get_text()
+
+
+def extract_work_item_metadata(raw: dict) -> dict:
+    fields = raw.get("fields", {})
+    assigned = fields.get("System.AssignedTo")
+    assigned_to = ""
+    if isinstance(assigned, dict):
+        assigned_to = assigned.get("uniqueName", assigned.get("displayName", ""))
+    elif isinstance(assigned, str):
+        assigned_to = assigned
+
+    tags_raw = fields.get("System.Tags", "")
+    tags = ",".join(t.strip() for t in tags_raw.split(";") if t.strip())
+
+    description = strip_html(fields.get("System.Description", ""))
+    snippet = description[:500] if description else ""
+
+    created_raw = fields.get("System.CreatedDate", "")
+    updated_raw = fields.get("System.ChangedDate", "")
+
+    return {
+        "id": raw["id"],
+        "title": fields.get("System.Title", ""),
+        "type": fields.get("System.WorkItemType", ""),
+        "state": fields.get("System.State", ""),
+        "area": fields.get("System.AreaPath", ""),
+        "iteration": fields.get("System.IterationPath", ""),
+        "assigned_to": assigned_to,
+        "tags": tags,
+        "priority": fields.get("Microsoft.VSTS.Common.Priority"),
+        "parent_id": fields.get("System.Parent"),
+        "created": created_raw[:10] if created_raw else "",
+        "updated": updated_raw[:10] if updated_raw else "",
+        "description_snippet": snippet,
+        "description_full": description,
+        "acceptance_criteria": strip_html(fields.get("Microsoft.VSTS.Common.AcceptanceCriteria", "")),
+    }
+
+
+def work_item_to_markdown(raw: dict, *, comments: list[dict] | None = None) -> str:
+    meta = extract_work_item_metadata(raw)
+
+    lines = [
+        "---",
+        f"id: {meta['id']}",
+        f"title: {meta['title']}",
+        f"type: {meta['type']}",
+        f"state: {meta['state']}",
+        f"area: {meta['area']}",
+        f"iteration: {meta['iteration']}",
+        f"assigned_to: {meta['assigned_to']}",
+        f"tags: [{meta['tags']}]",
+        f"priority: {meta['priority']}",
+        f"parent_id: {meta['parent_id']}",
+        f"created: {meta['created']}",
+        f"updated: {meta['updated']}",
+        "---",
+        "",
+    ]
+
+    if meta["description_full"]:
+        lines.append("## Description")
+        lines.append(meta["description_full"])
+        lines.append("")
+
+    if meta["acceptance_criteria"]:
+        lines.append("## Acceptance Criteria")
+        lines.append(meta["acceptance_criteria"])
+        lines.append("")
+
+    if comments:
+        lines.append("## Comments")
+        for c in comments:
+            author = c.get("createdBy", {}).get("displayName", "Unknown")
+            date = c.get("createdDate", "")[:10]
+            text = strip_html(c.get("text", ""))
+            lines.append(f"### {date} — {author}")
+            lines.append(text)
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+def wiki_page_to_markdown(title: str, content: str) -> str:
+    if content.startswith("# "):
+        return content
+    return f"# {title}\n\n{content}"

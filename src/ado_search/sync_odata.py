@@ -1,6 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+import json
+from pathlib import Path
 from urllib.parse import quote, urlparse
+
+import click
+
+from ado_search.auth import build_command
+from ado_search.db import Database
+from ado_search.markdown import work_item_to_markdown, extract_work_item_metadata
+from ado_search.runner import run_command
 
 ODATA_PAGE_SIZE = 5000
 ODATA_BASE = "https://analytics.dev.azure.com"
@@ -103,3 +113,90 @@ def odata_to_ado_format(odata_item: dict) -> dict:
             "Microsoft.VSTS.Common.AcceptanceCriteria": odata_item.get("Microsoft_VSTS_Common_AcceptanceCriteria", "") or "",
         },
     }
+
+
+async def sync_via_odata(
+    *,
+    org: str,
+    project: str,
+    auth_method: str,
+    data_dir: Path,
+    db: Database,
+    work_item_types: list[str],
+    area_paths: list[str],
+    states: list[str],
+    last_sync: str,
+    dry_run: bool = False,
+) -> dict | None:
+    """Sync work items via OData analytics. Returns stats dict or None if OData unavailable."""
+    url = build_odata_url(
+        org, project,
+        work_item_types=work_item_types,
+        area_paths=area_paths,
+        states=states,
+        last_sync=last_sync,
+    )
+
+    # Probe first page to check if OData is available
+    cmd = build_command("odata-query", auth_method, org=org, project=project, url=url)
+    result = await run_command(cmd, retries=1)  # Only 1 attempt for availability check
+
+    if result.returncode != 0:
+        stderr_lower = result.stderr.lower()
+        if any(s in stderr_lower for s in ["403", "401", "forbidden", "unauthorized", "not available"]):
+            return None  # OData not available — signal fallback
+        raise RuntimeError(f"OData query failed: {result.stderr}")
+
+    # Parse first page
+    if not result.stdout.strip():
+        return {"fetched": 0, "errors": 0, "fetched_ids": set()}
+
+    data = json.loads(result.stdout)
+    all_items = data.get("value", [])
+    next_link = data.get("@odata.nextLink")
+
+    # Follow pagination
+    while next_link:
+        cmd = build_command("odata-query", auth_method, org=org, project=project, url=next_link)
+        result = await run_command(cmd)
+        if result.returncode != 0:
+            click.echo(f"  Warning: OData pagination failed: {result.stderr}", err=True)
+            break
+        page_data = json.loads(result.stdout)
+        all_items.extend(page_data.get("value", []))
+        next_link = page_data.get("@odata.nextLink")
+        click.echo(f"  Fetched {len(all_items)} items via OData...")
+
+    click.echo(f"  OData returned {len(all_items)} work items")
+
+    if dry_run:
+        ids = [item.get("WorkItemId", 0) for item in all_items]
+        click.echo(f"Would process {len(all_items)} work items: {ids[:20]}...")
+        return {"fetched": 0, "errors": 0, "dry_run": True, "would_fetch": len(all_items), "fetched_ids": set()}
+
+    # Process items
+    fetched = 0
+    errors = 0
+    fetched_ids: set[int] = set()
+
+    with db.batch():
+        for item in all_items:
+            try:
+                ado_format = odata_to_ado_format(item)
+                item_id = ado_format["id"]
+                fetched_ids.add(item_id)
+
+                md = work_item_to_markdown(ado_format, comments=None)
+                meta = extract_work_item_metadata(ado_format)
+
+                md_path = data_dir / "work-items" / f"{item_id}.md"
+                md_path.parent.mkdir(parents=True, exist_ok=True)
+                md_path.write_text(md, encoding="utf-8")
+
+                db.upsert_work_item(meta)
+                fetched += 1
+            except Exception as e:
+                click.echo(f"  Warning: Failed to process item: {e}", err=True)
+                errors += 1
+
+    return {"fetched": fetched, "errors": errors, "fetched_ids": fetched_ids}

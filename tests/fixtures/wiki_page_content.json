@@ -1,0 +1,7 @@
+{
+  "id": 1,
+  "path": "/Getting-Started",
+  "content": "# Getting Started\n\nWelcome to the project. This guide covers setup and basic usage.\n\n## Prerequisites\n\n- Python 3.10+\n- Azure CLI",
+  "gitItemPath": "/Getting-Started.md",
+  "dateModified": "2026-03-01T10:00:00Z"
+}

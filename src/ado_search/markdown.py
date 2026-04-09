@@ -8,12 +8,10 @@ class _HTMLStripper(HTMLParser):
     def __init__(self):
         super().__init__()
         self._parts: list[str] = []
-        self._last_tag: str = ""
 
     def handle_starttag(self, tag, attrs):
         if tag in ("p", "div", "br", "li") and self._parts:
             self._parts.append("\n")
-        self._last_tag = tag
 
     def handle_data(self, data):
         self._parts.append(data)

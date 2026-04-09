@@ -176,3 +176,31 @@ def test_get_all_work_item_ids(tmp_path):
     ids = db.get_all_work_item_ids()
     assert sorted(ids) == [10, 20, 30]
     db.close()
+
+
+def test_delete_wiki_page(tmp_path):
+    db = Database(tmp_path / "index.db")
+    db.initialize()
+    db.upsert_wiki_page({
+        "path": "/ToDelete",
+        "title": "To Delete",
+        "updated": "2026-01-01",
+        "description_snippet": "Will be deleted",
+    })
+    db.delete_wiki_page("/ToDelete")
+    results = db.search_wiki("Delete")
+    assert results == []
+    db.close()
+
+
+def test_get_all_wiki_paths(tmp_path):
+    db = Database(tmp_path / "index.db")
+    db.initialize()
+    for p in ["/Page-A", "/Page-B"]:
+        db.upsert_wiki_page({
+            "path": p, "title": p.lstrip("/"), "updated": "2026-01-01",
+            "description_snippet": "test",
+        })
+    paths = db.get_all_wiki_paths()
+    assert sorted(paths) == ["/Page-A", "/Page-B"]
+    db.close()

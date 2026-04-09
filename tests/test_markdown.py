@@ -30,6 +30,8 @@ def test_extract_work_item_metadata():
     assert "2026-03-15" in meta["created"]
     assert "2026-04-01" in meta["updated"]
     assert meta["description_snippet"].startswith("When a user attempts")
+    assert meta["description_full"].startswith("When a user attempts")
+    assert "IdP configurations" in meta["acceptance_criteria"]
 
 
 def test_work_item_to_markdown():
@@ -41,6 +43,9 @@ def test_work_item_to_markdown():
     assert "title: Login fails with SSO redirect" in md
     assert "## Description" in md
     assert "SSO redirect fails with a 403 error" in md or "403 error" in md
+    assert "## Acceptance Criteria" in md
+    assert "type: Bug" in md
+    assert "state: Active" in md
 
 
 def test_work_item_to_markdown_with_comments():

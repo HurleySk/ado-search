@@ -45,9 +45,11 @@ def build_az_cli_command(
                 "--output", "json"]
 
     if operation == "comments":
-        return [*base, "boards", "work-item", "relation", "show",
-                "--id", str(work_item_id),
+        return [*base, "devops", "invoke",
+                "--area", "wit", "--resource", "comments",
+                "--route-parameters", f"id={work_item_id}",
                 "--org", org, "--project", project,
+                "--api-version", "7.1-preview.4",
                 "--output", "json"]
 
     raise ValueError(f"Unknown operation: {operation}")
@@ -73,7 +75,7 @@ def build_powershell_command(
             f"$token = {token_expr}; "
             f"$headers = {headers}; "
             f"$body = '{body}'; "
-            f"Invoke-RestMethod -Uri '{api_url}' -Method Post -Headers $headers -Body $body"
+            f"Invoke-RestMethod -Uri '{api_url}' -Method Post -Headers $headers -Body $body | ConvertTo-Json -Depth 10"
         )
     elif operation == "show":
         api_url = f"{org}/{project}/_apis/wit/workitems/{work_item_id}?$expand=all&api-version=7.1"

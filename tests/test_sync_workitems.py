@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from ado_search.db import Database
 from ado_search.runner import CommandResult
-from ado_search.sync_workitems import sync_work_items, build_wiql_query
+from ado_search.sync_workitems import sync_work_items, build_wiql_query, detect_deletions
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
@@ -101,4 +101,31 @@ def test_sync_work_items_writes_files_and_indexes(tmp_path):
     results = db.search_work_items("MFA")
     assert len(results) >= 1
 
+    db.close()
+
+
+def test_deletion_detection(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    wi_dir = data_dir / "work-items"
+    wi_dir.mkdir(parents=True)
+
+    db = Database(data_dir / "index.db")
+    db.initialize()
+
+    db.upsert_work_item({
+        "id": 999, "title": "Deleted item", "type": "Bug", "state": "Removed",
+        "area": "", "iteration": "", "assigned_to": "", "tags": "",
+        "priority": 3, "parent_id": None, "created": "2026-01-01",
+        "updated": "2026-01-01", "description_snippet": "Gone",
+    })
+    (wi_dir / "999.md").write_text("old content")
+
+    deleted = detect_deletions(
+        remote_ids={100, 200},
+        db=db,
+        data_dir=data_dir,
+    )
+    assert 999 in deleted
+    assert not (wi_dir / "999.md").exists()
+    assert db.search_work_items("Deleted") == []
     db.close()

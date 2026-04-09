@@ -98,6 +98,25 @@ async def _fetch_and_write_item(
         return None
 
 
+def detect_deletions(
+    *,
+    remote_ids: set[int],
+    db: Database,
+    data_dir: Path,
+) -> list[int]:
+    """Remove local items that no longer exist in ADO. Returns deleted IDs."""
+    local_ids = set(db.get_all_work_item_ids())
+    orphans = local_ids - remote_ids
+
+    for item_id in orphans:
+        md_path = data_dir / "work-items" / f"{item_id}.md"
+        if md_path.exists():
+            md_path.unlink()
+        db.delete_work_item(item_id)
+
+    return list(orphans)
+
+
 async def sync_work_items(
     *,
     org: str,

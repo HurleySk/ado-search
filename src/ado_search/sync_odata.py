@@ -45,7 +45,7 @@ def build_odata_url(
     parsed = urlparse(org)
     org_name = parsed.path.lstrip("/")
 
-    base_url = f"{ODATA_BASE}/{org_name}/{project}/_odata/v4.0-preview/WorkItems"
+    base_url = f"{ODATA_BASE}/{org_name}/{quote(project, safe='')}/_odata/v4.0-preview/WorkItems"
 
     # Build filter clauses
     filter_parts: list[str] = []

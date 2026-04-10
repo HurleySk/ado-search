@@ -51,8 +51,14 @@ ado-search search "setup guide" --format paths
 
 - **az-cli** (default): Uses `az devops` commands. Requires `az login`.
 - **az-powershell**: Uses Azure PowerShell + REST. Requires `Connect-AzAccount`.
+- **pat**: Uses a Personal Access Token via REST. For cross-cloud or service account scenarios.
 
-Set via `ado-search init --auth-method az-powershell` or in `config.toml`.
+Set via `ado-search init --auth-method <method>` or in `config.toml`.
+
+```bash
+# PAT example (token can also be set via ADO_PAT env var)
+ado-search init --org https://dev.azure.com/yourorg --project YourProject --auth-method pat --pat <token>
+```
 
 ## Search Formats
 

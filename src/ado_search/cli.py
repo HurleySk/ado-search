@@ -111,7 +111,7 @@ def sync(data_dir: str | None, dry_run: bool):
         click.echo("Syncing work items...")
         wi_stats = asyncio.run(sync_work_items(
             org=org, project=project, auth_method=auth_method, pat=pat,
-            data_dir=data_path, db=db,
+            data_dir=data_path,
             work_item_types=sync_cfg.get("work_item_types", []),
             area_paths=sync_cfg.get("area_paths", []),
             states=sync_cfg.get("states", []),
@@ -125,7 +125,7 @@ def sync(data_dir: str | None, dry_run: bool):
         click.echo("Syncing wiki pages...")
         wiki_stats = asyncio.run(sync_wiki(
             org=org, project=project, auth_method=auth_method, pat=pat,
-            data_dir=data_path, db=db,
+            data_dir=data_path,
             wiki_names=sync_cfg.get("wiki_names", []),
             max_concurrent=sync_cfg.get("performance", {}).get("max_concurrent", 5),
             dry_run=dry_run,
@@ -133,6 +133,9 @@ def sync(data_dir: str | None, dry_run: bool):
         click.echo(f"  Wiki pages: {wiki_stats['fetched']} synced, {wiki_stats['errors']} errors")
 
         if not dry_run:
+            wi_jsonl = data_path / "work-items.jsonl"
+            wiki_jsonl = data_path / "wiki-pages.jsonl"
+            db.reindex_from_jsonl(wi_jsonl, wiki_jsonl)
             cfg["sync"]["last_sync"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             save_config(cfg, config_path)
             click.echo("Sync complete.")
@@ -209,17 +212,16 @@ def show(item_id: str, data_dir: str | None):
             wi_id = int(item_id)
             item = db.get_work_item(wi_id)
             if item:
-                from ado_search.markdown import work_item_to_markdown
+                from ado_search.markdown import make_snippet, work_item_to_markdown
                 meta = dict(item)
                 meta["description_full"] = meta.pop("description", "")
-                meta["description_snippet"] = meta["description_full"][:500]
+                meta["description_snippet"] = make_snippet(meta["description_full"])
                 # Load comments from JSONL (not stored in DB)
                 comments = None
-                from ado_search.jsonl import read_jsonl
+                from ado_search.jsonl import read_jsonl_item
                 wi_jsonl = data_path / "work-items.jsonl"
                 if wi_jsonl.exists():
-                    items = read_jsonl(wi_jsonl, key="id")
-                    jsonl_item = items.get(wi_id)
+                    jsonl_item = read_jsonl_item(wi_jsonl, key="id", value=wi_id)
                     if jsonl_item and jsonl_item.get("comments"):
                         # Map from JSONL format to raw ADO format expected by markdown
                         comments = [

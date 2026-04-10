@@ -20,6 +20,7 @@ class Database:
         self._path = path
         self._conn: sqlite3.Connection | None = None
         self._in_batch: bool = False
+        self._skip_fts_delete: bool = False
 
     def _connect(self) -> sqlite3.Connection:
         if self._conn is None:
@@ -114,10 +115,11 @@ class Database:
                 item.get("description", ""), item.get("acceptance_criteria", ""),
             ),
         )
-        conn.execute(
-            "DELETE FROM search_index WHERE item_type = 'work_item' AND item_id = ?",
-            (str(item["id"]),),
-        )
+        if not self._skip_fts_delete:
+            conn.execute(
+                "DELETE FROM search_index WHERE item_type = 'work_item' AND item_id = ?",
+                (str(item["id"]),),
+            )
         conn.execute(
             "INSERT INTO search_index (item_type, item_id, title, description_snippet, tags) VALUES (?, ?, ?, ?, ?)",
             ("work_item", str(item["id"]), item["title"], item.get("description_snippet", ""), item["tags"]),
@@ -136,10 +138,11 @@ class Database:
             """,
             (page["path"], page["title"], page["updated"], page.get("content", "")),
         )
-        conn.execute(
-            "DELETE FROM search_index WHERE item_type = 'wiki' AND item_id = ?",
-            (page["path"],),
-        )
+        if not self._skip_fts_delete:
+            conn.execute(
+                "DELETE FROM search_index WHERE item_type = 'wiki' AND item_id = ?",
+                (page["path"],),
+            )
         conn.execute(
             "INSERT INTO search_index (item_type, item_id, title, description_snippet, tags) VALUES (?, ?, ?, ?, ?)",
             ("wiki", page["path"], page["title"], page.get("description_snippet", ""), ""),
@@ -281,30 +284,26 @@ class Database:
 
     def reindex_from_jsonl(self, work_items_path: Path, wiki_pages_path: Path) -> None:
         """Rebuild the entire DB index from JSONL files."""
-        import json
+        from ado_search.jsonl import iter_jsonl
+        from ado_search.markdown import make_snippet
+
         conn = self._connect()
         conn.execute("DELETE FROM work_items")
         conn.execute("DELETE FROM wiki_pages")
         conn.execute("DELETE FROM search_index")
         conn.commit()
 
-        with self.batch():
-            if work_items_path.exists():
-                with open(work_items_path, encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if line:
-                            item = json.loads(line)
-                            item.setdefault("description_snippet", item.get("description", "")[:500])
-                            self.upsert_work_item(item)
-            if wiki_pages_path.exists():
-                with open(wiki_pages_path, encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if line:
-                            page = json.loads(line)
-                            page.setdefault("description_snippet", page.get("content", "")[:500])
-                            self.upsert_wiki_page(page)
+        self._skip_fts_delete = True
+        try:
+            with self.batch():
+                for item in iter_jsonl(work_items_path):
+                    item.setdefault("description_snippet", make_snippet(item.get("description", "")))
+                    self.upsert_work_item(item)
+                for page in iter_jsonl(wiki_pages_path):
+                    page.setdefault("description_snippet", make_snippet(page.get("content", "")))
+                    self.upsert_wiki_page(page)
+        finally:
+            self._skip_fts_delete = False
 
     def close(self) -> None:
         if self._conn:

@@ -4,8 +4,20 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+
+
+def iter_jsonl(path: Path) -> Iterator[dict]:
+    """Yield items from a JSONL file one at a time."""
+    if not path.exists():
+        return
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                yield json.loads(line)
 
 
 def read_jsonl(path: Path, *, key: str) -> dict[Any, dict]:
@@ -13,16 +25,15 @@ def read_jsonl(path: Path, *, key: str) -> dict[Any, dict]:
 
     Returns {} if the file does not exist.
     """
-    if not path.exists():
-        return {}
-    result: dict[Any, dict] = {}
-    with path.open(encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                obj = json.loads(line)
-                result[obj[key]] = obj
-    return result
+    return {obj[key]: obj for obj in iter_jsonl(path)}
+
+
+def read_jsonl_item(path: Path, *, key: str, value: Any) -> dict | None:
+    """Scan JSONL for a single item where item[key] == value. Returns early."""
+    for item in iter_jsonl(path):
+        if item.get(key) == value:
+            return item
+    return None
 
 
 def write_jsonl(path: Path, items: dict[Any, dict], *, sort_key: str) -> None:

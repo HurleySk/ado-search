@@ -155,7 +155,6 @@ def test_sync_via_odata_success(tmp_path):
             project="MyProject",
             auth_method="az-cli",
             data_dir=data_dir,
-            db=db,
             work_item_types=["Bug"],
             area_paths=[], states=[], last_sync="",
             dry_run=False,
@@ -172,6 +171,9 @@ def test_sync_via_odata_success(tmp_path):
     assert 100 in items
     assert items[100]["title"] == "Test item"
 
+    # Reindex and verify search works
+    wiki_jsonl = data_dir / "wiki-pages.jsonl"
+    db.reindex_from_jsonl(wi_jsonl, wiki_jsonl)
     results = db.search_work_items("Test")
     assert len(results) >= 1
     db.close()
@@ -196,7 +198,6 @@ def test_sync_via_odata_returns_none_on_403(tmp_path):
             project="MyProject",
             auth_method="az-cli",
             data_dir=data_dir,
-            db=db,
             work_item_types=["Bug"],
             area_paths=[], states=[], last_sync="",
         ))
@@ -244,7 +245,7 @@ def test_sync_via_odata_pagination(tmp_path):
             org="https://dev.azure.com/contoso",
             project="MyProject",
             auth_method="az-cli",
-            data_dir=data_dir, db=db,
+            data_dir=data_dir,
             work_item_types=["Bug", "Task"],
             area_paths=[], states=[], last_sync="",
         ))
@@ -285,7 +286,7 @@ def test_sync_via_odata_dry_run(tmp_path):
             org="https://dev.azure.com/contoso",
             project="MyProject",
             auth_method="az-cli",
-            data_dir=data_dir, db=db,
+            data_dir=data_dir,
             work_item_types=["Bug"],
             area_paths=[], states=[], last_sync="",
             dry_run=True,

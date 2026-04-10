@@ -84,7 +84,6 @@ def test_wiki_deletion_detection_via_jsonl(tmp_path):
             project="MyProject",
             auth_method="az-cli",
             data_dir=data_dir,
-            db=db,
             wiki_names=[],
             max_concurrent=2,
             dry_run=False,
@@ -97,7 +96,9 @@ def test_wiki_deletion_detection_via_jsonl(tmp_path):
     assert "/Old-Page" not in pages
     assert "/Getting-Started" in pages
 
-    # DB should not have the orphan
+    # Reindex and verify DB reflects orphan removal
+    wi_jsonl = data_dir / "work-items.jsonl"
+    db.reindex_from_jsonl(wi_jsonl, wiki_jsonl)
     assert db.get_wiki_page("/Old-Page") is None
     assert db.get_wiki_page("/Getting-Started") is not None
 
@@ -132,7 +133,6 @@ def test_sync_wiki_writes_jsonl_and_indexes(tmp_path):
             project="MyProject",
             auth_method="az-cli",
             data_dir=data_dir,
-            db=db,
             wiki_names=[],
             max_concurrent=2,
             dry_run=False,
@@ -149,6 +149,9 @@ def test_sync_wiki_writes_jsonl_and_indexes(tmp_path):
     page_paths = list(pages.keys())
     assert any("Getting-Started" in p for p in page_paths)
 
+    # Reindex and verify search works
+    wi_jsonl = data_dir / "work-items.jsonl"
+    db.reindex_from_jsonl(wi_jsonl, wiki_jsonl)
     results = db.search_wiki("Getting Started")
     assert len(results) >= 1
 

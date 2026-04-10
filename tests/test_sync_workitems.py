@@ -99,7 +99,6 @@ def test_sync_work_items_writes_jsonl_and_indexes(tmp_path):
             project="MyProject",
             auth_method="az-cli",
             data_dir=data_dir,
-            db=db,
             work_item_types=["Bug", "User Story"],
             area_paths=[],
             states=[],
@@ -118,6 +117,9 @@ def test_sync_work_items_writes_jsonl_and_indexes(tmp_path):
     assert 12345 in items
     assert 12346 in items
 
+    # Reindex and verify search works
+    wiki_jsonl = data_dir / "wiki-pages.jsonl"
+    db.reindex_from_jsonl(wi_jsonl, wiki_jsonl)
     results = db.search_work_items("SSO login")
     assert len(results) >= 1
     results = db.search_work_items("MFA")
@@ -166,7 +168,6 @@ def test_deletion_detection_via_jsonl(tmp_path):
             project="MyProject",
             auth_method="az-cli",
             data_dir=data_dir,
-            db=db,
             work_item_types=["Bug", "User Story"],
             area_paths=[],
             states=[],
@@ -183,7 +184,9 @@ def test_deletion_detection_via_jsonl(tmp_path):
     assert 999 not in items
     assert 12345 in items
 
-    # DB should not have the orphan
+    # Reindex and verify DB reflects orphan removal
+    wiki_jsonl = data_dir / "wiki-pages.jsonl"
+    db.reindex_from_jsonl(wi_jsonl, wiki_jsonl)
     assert db.get_work_item(999) is None
     assert db.get_work_item(12345) is not None
 

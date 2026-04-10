@@ -6,9 +6,8 @@ from pathlib import Path
 import click
 
 from ado_search.auth import OP_WIKI_LIST, OP_WIKI_PAGE_LIST, OP_WIKI_PAGE_SHOW
-from ado_search.db import Database
-from ado_search.jsonl import merge_jsonl, read_jsonl, write_jsonl
 from ado_search.runner import SyncResult, fetch_and_parse, run_operation
+from ado_search.sync_common import finalize_jsonl, split_results
 
 
 def _flatten_wiki_pages(tree: dict) -> list[dict]:
@@ -89,7 +88,6 @@ async def sync_wiki(
     auth_method: str,
     pat: str = "",
     data_dir: Path,
-    db: Database,
     wiki_names: list[str],
     max_concurrent: int = 5,
     dry_run: bool = False,
@@ -153,32 +151,18 @@ async def sync_wiki(
 
     results = await asyncio.gather(*tasks)
 
-    fetched_records: dict[str, dict] = {}
-    for r in results:
-        if isinstance(r, str):
-            total_errors += 1
-            click.echo(f"  Warning: {r}", err=True)
-        else:
-            fetched_records[r["path"]] = r
-            total_fetched += 1
+    fetched_records, fetch_errors = split_results(results, key="path")
+    for e in fetch_errors:
+        click.echo(f"  Warning: {e}", err=True)
+    total_errors += len(fetch_errors)
+    total_fetched = len(fetched_records)
 
-    # Write JSONL
     wiki_jsonl = data_dir / "wiki-pages.jsonl"
-
-    if enum_errors == 0:
-        existing = read_jsonl(wiki_jsonl, key="path")
-        orphan_paths = set(existing.keys()) - all_remote_paths
-        if orphan_paths:
-            click.echo(f"  Removing {len(orphan_paths)} orphaned wiki pages")
-        all_pages = {k: v for k, v in existing.items() if k in all_remote_paths}
-        all_pages.update(fetched_records)
-    else:
-        all_pages = merge_jsonl(wiki_jsonl, fetched_records, key="path")
-
-    write_jsonl(wiki_jsonl, all_pages, sort_key="path")
-
-    # Rebuild DB index
-    wi_jsonl = data_dir / "work-items.jsonl"
-    db.reindex_from_jsonl(wi_jsonl, wiki_jsonl)
+    finalize_jsonl(
+        wiki_jsonl, fetched_records,
+        key="path", sort_key="path",
+        is_incremental=(enum_errors > 0),
+        remote_keys=all_remote_paths if enum_errors == 0 else None,
+    )
 
     return {"fetched": total_fetched, "errors": total_errors}

@@ -22,6 +22,14 @@ class _HTMLStripper(HTMLParser):
         return text.strip()
 
 
+SNIPPET_LENGTH = 500
+
+
+def make_snippet(text: str) -> str:
+    """Create a description snippet from text."""
+    return (text or "")[:SNIPPET_LENGTH]
+
+
 def strip_html(html: str) -> str:
     if not html:
         return ""
@@ -43,7 +51,7 @@ def extract_work_item_metadata(raw: dict) -> dict:
     tags = ",".join(t.strip() for t in tags_raw.split(";") if t.strip())
 
     description = strip_html(fields.get("System.Description", ""))
-    snippet = description[:500] if description else ""
+    snippet = make_snippet(description)
 
     created_raw = fields.get("System.CreatedDate", "")
     updated_raw = fields.get("System.ChangedDate", "")

@@ -8,10 +8,8 @@ from urllib.parse import quote, urlparse
 import click
 
 from ado_search.auth import OP_ODATA_QUERY
-from ado_search.db import Database
 from ado_search.runner import SyncResult, run_operation
-from ado_search.jsonl import merge_jsonl, read_jsonl, write_jsonl
-from ado_search.sync_common import prepare_work_item
+from ado_search.sync_common import finalize_jsonl, prepare_work_item
 
 ODATA_PAGE_SIZE = 5000
 ODATA_BASE = "https://analytics.dev.azure.com"
@@ -123,7 +121,6 @@ async def sync_via_odata(
     auth_method: str,
     pat: str = "",
     data_dir: Path,
-    db: Database,
     work_item_types: list[str],
     area_paths: list[str],
     states: list[str],
@@ -204,22 +201,10 @@ async def sync_via_odata(
 
     click.echo(f"  OData: {fetched} work items processed")
 
-    # Write JSONL
     wi_jsonl = data_dir / "work-items.jsonl"
-
-    if last_sync:
-        all_items = merge_jsonl(wi_jsonl, fetched_records, key="id")
-    else:
-        existing = read_jsonl(wi_jsonl, key="id")
-        orphan_ids = set(existing.keys()) - set(fetched_records.keys())
-        if orphan_ids:
-            click.echo(f"  Removing {len(orphan_ids)} orphaned items")
-        all_items = fetched_records
-
-    write_jsonl(wi_jsonl, all_items, sort_key="id")
-
-    # Rebuild DB index
-    wiki_jsonl = data_dir / "wiki-pages.jsonl"
-    db.reindex_from_jsonl(wi_jsonl, wiki_jsonl)
+    finalize_jsonl(
+        wi_jsonl, fetched_records,
+        key="id", sort_key="id", is_incremental=bool(last_sync),
+    )
 
     return {"fetched": fetched, "errors": errors}

@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from ado_search.jsonl import read_jsonl, write_jsonl, merge_jsonl
+from ado_search.jsonl import iter_jsonl, read_jsonl, read_jsonl_item, write_jsonl, merge_jsonl
 
 
 def test_write_jsonl_sorts_by_key(tmp_path):
@@ -67,6 +67,36 @@ def test_write_jsonl_string_sort_key(tmp_path):
     lines = path.read_text(encoding="utf-8").strip().split("\n")
     assert json.loads(lines[0])["path"] == "/A/Page"
     assert json.loads(lines[1])["path"] == "/Z/Page"
+
+
+def test_iter_jsonl_yields_items(tmp_path):
+    path = tmp_path / "items.jsonl"
+    path.write_text('{"id": 1}\n{"id": 2}\n', encoding="utf-8")
+    items = list(iter_jsonl(path))
+    assert items == [{"id": 1}, {"id": 2}]
+
+
+def test_iter_jsonl_missing_file(tmp_path):
+    path = tmp_path / "missing.jsonl"
+    assert list(iter_jsonl(path)) == []
+
+
+def test_read_jsonl_item_found(tmp_path):
+    path = tmp_path / "items.jsonl"
+    path.write_text('{"id": 1, "v": "a"}\n{"id": 2, "v": "b"}\n', encoding="utf-8")
+    item = read_jsonl_item(path, key="id", value=1)
+    assert item == {"id": 1, "v": "a"}
+
+
+def test_read_jsonl_item_not_found(tmp_path):
+    path = tmp_path / "items.jsonl"
+    path.write_text('{"id": 1}\n', encoding="utf-8")
+    assert read_jsonl_item(path, key="id", value=99) is None
+
+
+def test_read_jsonl_item_missing_file(tmp_path):
+    path = tmp_path / "missing.jsonl"
+    assert read_jsonl_item(path, key="id", value=1) is None
 
 
 from ado_search.sync_common import prepare_work_item

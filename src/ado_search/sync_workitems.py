@@ -7,10 +7,8 @@ from pathlib import Path
 import click
 
 from ado_search.auth import OP_COMMENTS, OP_QUERY, OP_SHOW
-from ado_search.db import Database
 from ado_search.runner import SyncResult, fetch_and_parse, run_operation
-from ado_search.jsonl import merge_jsonl, read_jsonl, write_jsonl
-from ado_search.sync_common import prepare_work_item
+from ado_search.sync_common import finalize_jsonl, prepare_work_item, split_results
 
 
 WIQL_PAGE_SIZE = 20000
@@ -232,7 +230,6 @@ async def sync_work_items(
     auth_method: str,
     pat: str = "",
     data_dir: Path,
-    db: Database,
     work_item_types: list[str],
     area_paths: list[str],
     states: list[str],
@@ -247,7 +244,7 @@ async def sync_work_items(
     click.echo("  Trying OData analytics (fast path)...")
     odata_result = await sync_via_odata(
         org=org, project=project, auth_method=auth_method, pat=pat,
-        data_dir=data_dir, db=db,
+        data_dir=data_dir,
         work_item_types=work_item_types, area_paths=area_paths,
         states=states, last_sync=last_sync, dry_run=dry_run,
     )
@@ -290,32 +287,14 @@ async def sync_work_items(
 
     results = await asyncio.gather(*tasks)
 
-    fetched_records: dict[int, dict] = {}
-    errors: list[str] = []
-    for r in results:
-        if isinstance(r, str):
-            errors.append(r)
-            click.echo(f"  Warning: {r}", err=True)
-        else:
-            fetched_records[r["id"]] = r
+    fetched_records, errors = split_results(results, key="id")
+    for e in errors:
+        click.echo(f"  Warning: {e}", err=True)
 
-    # Write JSONL
     wi_jsonl = data_dir / "work-items.jsonl"
-
-    if last_sync:
-        all_items = merge_jsonl(wi_jsonl, fetched_records, key="id")
-    else:
-        # Full sync — orphan detection via JSONL comparison
-        existing = read_jsonl(wi_jsonl, key="id")
-        orphan_ids = set(existing.keys()) - set(fetched_records.keys())
-        if orphan_ids:
-            click.echo(f"  Removing {len(orphan_ids)} orphaned items")
-        all_items = fetched_records
-
-    write_jsonl(wi_jsonl, all_items, sort_key="id")
-
-    # Rebuild DB index
-    wiki_jsonl = data_dir / "wiki-pages.jsonl"
-    db.reindex_from_jsonl(wi_jsonl, wiki_jsonl)
+    finalize_jsonl(
+        wi_jsonl, fetched_records,
+        key="id", sort_key="id", is_incremental=bool(last_sync),
+    )
 
     return {"fetched": len(fetched_records), "errors": len(errors)}

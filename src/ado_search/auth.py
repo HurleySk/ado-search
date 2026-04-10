@@ -164,4 +164,84 @@ def build_command(operation: str, auth_method: str, **kwargs) -> list[str]:
     """Dispatch to az-cli or PowerShell command builder based on auth method."""
     if auth_method == "az-cli":
         return build_az_cli_command(operation, **kwargs)
+    if auth_method == "pat":
+        raise ValueError("PAT auth uses direct HTTP, not shell commands. Use pat_request() instead.")
     return build_powershell_command(operation, **kwargs)
+
+
+def get_pat(config: dict | None = None) -> str:
+    """Get PAT from env var or config. Env var takes precedence."""
+    import os
+    pat = os.environ.get("ADO_PAT", "")
+    if not pat and config:
+        pat = config.get("auth", {}).get("pat", "")
+    if not pat:
+        raise ValueError("No PAT found. Set ADO_PAT env var or auth.pat in config.toml")
+    return pat
+
+
+def pat_request(
+    operation: str,
+    *,
+    org: str,
+    project: str,
+    pat: str,
+    wiql: str | None = None,
+    work_item_id: int | None = None,
+    wiki: str | None = None,
+    path: str | None = None,
+    url: str | None = None,
+) -> dict | list:
+    """Make a direct HTTP request using PAT Basic auth. Returns parsed JSON."""
+    import base64
+    import json
+    from urllib.request import Request, urlopen
+    from urllib.error import HTTPError
+
+    url_project = quote(project or "", safe="")
+    url_wiki = quote(wiki or "", safe="")
+
+    creds = base64.b64encode(f":{pat}".encode()).decode()
+    headers = {
+        "Authorization": f"Basic {creds}",
+        "Content-Type": "application/json",
+    }
+
+    if operation == "query":
+        api_url = f"{org}/{url_project}/_apis/wit/wiql?api-version=7.1"
+        body = json.dumps({"query": wiql}).encode()
+        method = "POST"
+    elif operation == "show":
+        api_url = f"{org}/{url_project}/_apis/wit/workitems/{work_item_id}?$expand=all&api-version=7.1"
+        body = None
+        method = "GET"
+    elif operation == "wiki-list":
+        api_url = f"{org}/{url_project}/_apis/wiki/wikis?api-version=7.1"
+        body = None
+        method = "GET"
+    elif operation == "wiki-page-list":
+        api_url = f"{org}/{url_project}/_apis/wiki/wikis/{url_wiki}/pages?path=/&recursionLevel=full&api-version=7.1"
+        body = None
+        method = "GET"
+    elif operation == "wiki-page-show":
+        encoded_path = quote(path or "", safe="")
+        api_url = f"{org}/{url_project}/_apis/wiki/wikis/{url_wiki}/pages?path={encoded_path}&includeContent=true&api-version=7.1"
+        body = None
+        method = "GET"
+    elif operation == "comments":
+        api_url = f"{org}/{url_project}/_apis/wit/workitems/{work_item_id}/comments?api-version=7.1-preview.4"
+        body = None
+        method = "GET"
+    elif operation == "odata-query":
+        api_url = url
+        body = None
+        method = "GET"
+    else:
+        raise ValueError(f"Unknown operation: {operation}")
+
+    req = Request(api_url, data=body, headers=headers, method=method)
+    try:
+        with urlopen(req, timeout=60) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except HTTPError as e:
+        raise RuntimeError(f"HTTP {e.code} for {operation}: {e.read().decode('utf-8', errors='replace')[:500]}")

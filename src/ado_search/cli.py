@@ -26,11 +26,12 @@ def main():
 @main.command()
 @click.option("--org", prompt="Organization URL", help="e.g. https://dev.azure.com/contoso")
 @click.option("--project", prompt="Project name", help="Azure DevOps project name")
-@click.option("--auth-method", type=click.Choice(["az-cli", "az-powershell"]),
+@click.option("--auth-method", type=click.Choice(["az-cli", "az-powershell", "pat"]),
               default="az-cli", help="Authentication method")
+@click.option("--pat", default=None, help="Personal access token (or set ADO_PAT env var)")
 @click.option("--data-dir", type=click.Path(), default=None,
               help="Data directory (default: ./.ado-search)")
-def init(org: str, project: str, auth_method: str, data_dir: str | None):
+def init(org: str, project: str, auth_method: str, pat: str | None, data_dir: str | None):
     """Initialize ado-search configuration."""
     data_path = Path(data_dir) if data_dir else _default_data_dir()
     data_path.mkdir(parents=True, exist_ok=True)
@@ -39,6 +40,8 @@ def init(org: str, project: str, auth_method: str, data_dir: str | None):
     cfg["organization"]["url"] = org
     cfg["organization"]["project"] = project
     cfg["auth"]["method"] = auth_method
+    if pat:
+        cfg["auth"]["pat"] = pat
 
     config_path = data_path / "config.toml"
     save_config(cfg, config_path)
@@ -74,6 +77,12 @@ def sync(data_dir: str | None, dry_run: bool):
     auth_method = cfg["auth"]["method"]
     sync_cfg = cfg["sync"]
 
+    # Resolve PAT from config or env var
+    pat = ""
+    if auth_method == "pat":
+        from ado_search.auth import get_pat
+        pat = get_pat(cfg)
+
     db = Database(data_path / "index.db")
     db.initialize()
 
@@ -83,7 +92,7 @@ def sync(data_dir: str | None, dry_run: bool):
 
         click.echo("Syncing work items...")
         wi_stats = asyncio.run(sync_work_items(
-            org=org, project=project, auth_method=auth_method,
+            org=org, project=project, auth_method=auth_method, pat=pat,
             data_dir=data_path, db=db,
             work_item_types=sync_cfg.get("work_item_types", []),
             area_paths=sync_cfg.get("area_paths", []),
@@ -96,7 +105,7 @@ def sync(data_dir: str | None, dry_run: bool):
 
         click.echo("Syncing wiki pages...")
         wiki_stats = asyncio.run(sync_wiki(
-            org=org, project=project, auth_method=auth_method,
+            org=org, project=project, auth_method=auth_method, pat=pat,
             data_dir=data_path, db=db,
             wiki_names=sync_cfg.get("wiki_names", []),
             max_concurrent=sync_cfg.get("performance", {}).get("max_concurrent", 5),

@@ -9,7 +9,15 @@ import click
 from ado_search.auth import build_command
 from ado_search.db import Database
 from ado_search.markdown import work_item_to_markdown, extract_work_item_metadata
-from ado_search.runner import run_command, CommandResult
+from ado_search.runner import run_command, run_pat_request, CommandResult
+
+
+async def _run(auth_method: str, operation: str, *, org: str, project: str, pat: str = "", **kwargs) -> CommandResult:
+    """Route to PAT direct HTTP or shell command based on auth method."""
+    if auth_method == "pat":
+        return await run_pat_request(operation, org=org, project=project, pat=pat, **kwargs)
+    cmd = build_command(operation, auth_method, org=org, project=project, **kwargs)
+    return await run_command(cmd)
 
 
 WIQL_PAGE_SIZE = 20000
@@ -55,12 +63,9 @@ def build_wiql_query(
 
 
 async def _fetch_comments(
-    work_item_id: int, auth_method: str, org: str, project: str,
+    work_item_id: int, auth_method: str, org: str, project: str, pat: str = "",
 ) -> list[dict]:
-    cmd = build_command(
-        "comments", auth_method, org=org, project=project, work_item_id=work_item_id,
-    )
-    result = await run_command(cmd)
+    result = await _run(auth_method, "comments", org=org, project=project, pat=pat, work_item_id=work_item_id)
     if result.returncode != 0:
         return []
     try:
@@ -76,16 +81,14 @@ async def _fetch_and_write_item(
     auth_method: str,
     org: str,
     project: str,
+    pat: str = "",
     data_dir: Path,
     db: Database,
     semaphore: asyncio.Semaphore,
 ) -> str | None:
     """Fetch a single work item and write it. Returns error message or None."""
     async with semaphore:
-        cmd = build_command(
-            "show", auth_method, org=org, project=project, work_item_id=item_id,
-        )
-        result = await run_command(cmd)
+        result = await _run(auth_method, "show", org=org, project=project, pat=pat, work_item_id=item_id)
         if result.returncode != 0:
             return f"Failed to fetch #{item_id}: {result.stderr}"
 
@@ -94,7 +97,7 @@ async def _fetch_and_write_item(
         except (json.JSONDecodeError, ValueError):
             return f"Invalid JSON for #{item_id}"
 
-        comments = await _fetch_comments(item_id, auth_method, org, project)
+        comments = await _fetch_comments(item_id, auth_method, org, project, pat=pat)
         md = work_item_to_markdown(raw, comments=comments)
         meta = extract_work_item_metadata(raw)
 
@@ -150,6 +153,7 @@ async def _discover_work_item_ids(
     auth_method: str,
     org: str,
     project: str,
+    pat: str = "",
     work_item_types: list[str],
     area_paths: list[str],
     states: list[str],
@@ -164,8 +168,7 @@ async def _discover_work_item_ids(
         last_sync=last_sync,
         project=project,
     )
-    cmd = build_command("query", auth_method, org=org, project=project, wiql=wiql)
-    result = await run_command(cmd)
+    result = await _run(auth_method, "query", org=org, project=project, pat=pat, wiql=wiql)
 
     if result.returncode == 0:
         ids = _parse_query_result(result.stdout)
@@ -191,8 +194,7 @@ async def _discover_work_item_ids(
             states=states, last_sync=last_sync, project=project,
             min_id=probe_start, max_id=probe_start + ID_CHUNK_SIZE,
         )
-        cmd = build_command("query", auth_method, org=org, project=project, wiql=probe_wiql)
-        probe_result = await run_command(cmd)
+        probe_result = await _run(auth_method, "query", org=org, project=project, pat=pat, wiql=probe_wiql)
         if probe_result.returncode == 0:
             probe_ids = _parse_query_result(probe_result.stdout)
             if probe_ids:
@@ -218,8 +220,7 @@ async def _discover_work_item_ids(
             min_id=min_id,
             max_id=min_id + ID_CHUNK_SIZE,
         )
-        cmd = build_command("query", auth_method, org=org, project=project, wiql=wiql)
-        result = await run_command(cmd)
+        result = await _run(auth_method, "query", org=org, project=project, pat=pat, wiql=wiql)
 
         if result.returncode != 0:
             if "VS402337" in result.stderr:
@@ -232,8 +233,7 @@ async def _discover_work_item_ids(
                         states=states, last_sync=last_sync, project=project,
                         min_id=sub_start, max_id=sub_start + half,
                     )
-                    sub_cmd = build_command("query", auth_method, org=org, project=project, wiql=sub_wiql)
-                    sub_result = await run_command(sub_cmd)
+                    sub_result = await _run(auth_method, "query", org=org, project=project, pat=pat, wiql=sub_wiql)
                     if sub_result.returncode == 0:
                         all_ids.extend(_parse_query_result(sub_result.stdout))
                 min_id += ID_CHUNK_SIZE
@@ -262,6 +262,7 @@ async def sync_work_items(
     org: str,
     project: str,
     auth_method: str,
+    pat: str = "",
     data_dir: Path,
     db: Database,
     work_item_types: list[str],
@@ -276,7 +277,7 @@ async def sync_work_items(
 
     click.echo("  Trying OData analytics (fast path)...")
     odata_result = await sync_via_odata(
-        org=org, project=project, auth_method=auth_method,
+        org=org, project=project, auth_method=auth_method, pat=pat,
         data_dir=data_dir, db=db,
         work_item_types=work_item_types, area_paths=area_paths,
         states=states, last_sync=last_sync, dry_run=dry_run,
@@ -296,6 +297,7 @@ async def sync_work_items(
         auth_method=auth_method,
         org=org,
         project=project,
+        pat=pat,
         work_item_types=work_item_types,
         area_paths=area_paths,
         states=states,
@@ -316,6 +318,7 @@ async def sync_work_items(
                 auth_method=auth_method,
                 org=org,
                 project=project,
+                pat=pat,
                 data_dir=data_dir,
                 db=db,
                 semaphore=semaphore,

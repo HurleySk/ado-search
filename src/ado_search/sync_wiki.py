@@ -9,7 +9,14 @@ import click
 from ado_search.auth import build_command
 from ado_search.db import Database
 from ado_search.markdown import wiki_page_to_markdown
-from ado_search.runner import run_command
+from ado_search.runner import run_command, run_pat_request
+
+
+async def _run_wiki(auth_method: str, operation: str, *, org: str, project: str, pat: str = "", **kwargs):
+    if auth_method == "pat":
+        return await run_pat_request(operation, org=org, project=project, pat=pat, **kwargs)
+    cmd = build_command(operation, auth_method, org=org, project=project, **kwargs)
+    return await run_command(cmd)
 
 
 def _flatten_wiki_pages(tree: dict) -> list[dict]:
@@ -35,16 +42,13 @@ async def _fetch_and_write_page(
     auth_method: str,
     org: str,
     project: str,
+    pat: str = "",
     data_dir: Path,
     db: Database,
     semaphore: asyncio.Semaphore,
 ) -> str | None:
     async with semaphore:
-        cmd = build_command(
-            "wiki-page-show", auth_method,
-            org=org, project=project, wiki=wiki_name, path=page_path,
-        )
-        result = await run_command(cmd)
+        result = await _run_wiki(auth_method, "wiki-page-show", org=org, project=project, pat=pat, wiki=wiki_name, path=page_path)
         if result.returncode != 0:
             return f"Failed to fetch wiki page {page_path}: {result.stderr}"
 
@@ -99,14 +103,14 @@ async def sync_wiki(
     org: str,
     project: str,
     auth_method: str,
+    pat: str = "",
     data_dir: Path,
     db: Database,
     wiki_names: list[str],
     max_concurrent: int = 5,
     dry_run: bool = False,
 ) -> dict:
-    cmd = build_command("wiki-list", auth_method, org=org, project=project)
-    result = await run_command(cmd)
+    result = await _run_wiki(auth_method, "wiki-list", org=org, project=project, pat=pat)
     if result.returncode != 0:
         raise RuntimeError(f"Wiki list failed: {result.stderr}")
 
@@ -124,11 +128,7 @@ async def sync_wiki(
     for wiki in wikis:
         wiki_name = wiki["name"]
 
-        cmd = build_command(
-            "wiki-page-list", auth_method,
-            org=org, project=project, wiki=wiki_name,
-        )
-        result = await run_command(cmd)
+        result = await _run_wiki(auth_method, "wiki-page-list", org=org, project=project, pat=pat, wiki=wiki_name)
         if result.returncode != 0:
             click.echo(f"  Warning: Failed to list pages for wiki {wiki_name}", err=True)
             total_errors += 1
@@ -162,7 +162,7 @@ async def sync_wiki(
             tasks = [
                 _fetch_and_write_page(
                     wiki_name, page["path"],
-                    auth_method=auth_method, org=org, project=project,
+                    auth_method=auth_method, org=org, project=project, pat=pat,
                     data_dir=data_dir, db=db, semaphore=semaphore,
                 )
                 for page in pages

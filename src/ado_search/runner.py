@@ -70,6 +70,26 @@ async def run_command(
     return last_result  # type: ignore[return-value]
 
 
+async def run_pat_request(operation: str, *, org: str, project: str, pat: str, **kwargs) -> CommandResult:
+    """Execute an ADO API call using PAT auth. Returns CommandResult for compatibility."""
+    from ado_search.auth import pat_request
+    try:
+        data = pat_request(operation, org=org, project=project, pat=pat, **kwargs)
+        return CommandResult(
+            command=["pat_request", operation],
+            returncode=0,
+            stdout=json.dumps(data),
+            stderr="",
+        )
+    except Exception as e:
+        return CommandResult(
+            command=["pat_request", operation],
+            returncode=1,
+            stdout="",
+            stderr=str(e),
+        )
+
+
 async def run_commands_parallel(
     cmds: list[list[str]],
     *,

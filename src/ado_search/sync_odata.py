@@ -10,7 +10,7 @@ import click
 from ado_search.auth import build_command
 from ado_search.db import Database
 from ado_search.markdown import work_item_to_markdown, extract_work_item_metadata
-from ado_search.runner import run_command
+from ado_search.runner import run_command, run_pat_request
 
 ODATA_PAGE_SIZE = 5000
 ODATA_BASE = "https://analytics.dev.azure.com"
@@ -120,6 +120,7 @@ async def sync_via_odata(
     org: str,
     project: str,
     auth_method: str,
+    pat: str = "",
     data_dir: Path,
     db: Database,
     work_item_types: list[str],
@@ -138,8 +139,11 @@ async def sync_via_odata(
     )
 
     # Probe first page to check if OData is available
-    cmd = build_command("odata-query", auth_method, org=org, project=project, url=url)
-    result = await run_command(cmd, retries=1)  # Only 1 attempt for availability check
+    if auth_method == "pat":
+        result = await run_pat_request("odata-query", org=org, project=project, pat=pat, url=url)
+    else:
+        cmd = build_command("odata-query", auth_method, org=org, project=project, url=url)
+        result = await run_command(cmd, retries=1)  # Only 1 attempt for availability check
 
     if result.returncode != 0:
         stderr_lower = result.stderr.lower()
@@ -157,8 +161,11 @@ async def sync_via_odata(
 
     # Follow pagination
     while next_link:
-        cmd = build_command("odata-query", auth_method, org=org, project=project, url=next_link)
-        result = await run_command(cmd)
+        if auth_method == "pat":
+            result = await run_pat_request("odata-query", org=org, project=project, pat=pat, url=next_link)
+        else:
+            cmd = build_command("odata-query", auth_method, org=org, project=project, url=next_link)
+            result = await run_command(cmd)
         if result.returncode != 0:
             click.echo(f"  Warning: OData pagination failed: {result.stderr}", err=True)
             break

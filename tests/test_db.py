@@ -240,3 +240,93 @@ def test_search_special_characters(tmp_path):
     results = db.search_work_items("test*")
     assert isinstance(results, list)
     db.close()
+
+
+def test_upsert_work_item_stores_full_text(tmp_path):
+    db = Database(tmp_path / "index.db")
+    db.initialize()
+    db.upsert_work_item({
+        "id": 1, "title": "Test", "type": "Bug", "state": "Active",
+        "area": "A", "iteration": "I", "assigned_to": "u@e.com",
+        "tags": "t1", "priority": 1, "parent_id": None,
+        "created": "2025-01-01", "updated": "2025-01-02",
+        "description_snippet": "short", "description": "full description text",
+        "acceptance_criteria": "full AC text",
+    })
+    conn = db._connect()
+    row = conn.execute("SELECT description, acceptance_criteria FROM work_items WHERE id = 1").fetchone()
+    assert row["description"] == "full description text"
+    assert row["acceptance_criteria"] == "full AC text"
+    db.close()
+
+
+def test_upsert_wiki_page_stores_content(tmp_path):
+    db = Database(tmp_path / "index.db")
+    db.initialize()
+    db.upsert_wiki_page({
+        "path": "/Test", "title": "Test", "updated": "2025-01-01",
+        "description_snippet": "short", "content": "# Full page content",
+    })
+    conn = db._connect()
+    row = conn.execute("SELECT content FROM wiki_pages WHERE path = '/Test'").fetchone()
+    assert row["content"] == "# Full page content"
+    db.close()
+
+
+def test_get_work_item_by_id(tmp_path):
+    db = Database(tmp_path / "index.db")
+    db.initialize()
+    db.upsert_work_item({
+        "id": 42, "title": "Test Item", "type": "Task", "state": "New",
+        "area": "A", "iteration": "I", "assigned_to": "",
+        "tags": "", "priority": 2, "parent_id": None,
+        "created": "2025-01-01", "updated": "2025-01-02",
+        "description_snippet": "s", "description": "full desc",
+        "acceptance_criteria": "ac",
+    })
+    item = db.get_work_item(42)
+    assert item is not None
+    assert item["title"] == "Test Item"
+    assert item["description"] == "full desc"
+    assert db.get_work_item(999) is None
+    db.close()
+
+
+def test_get_wiki_page_by_path(tmp_path):
+    db = Database(tmp_path / "index.db")
+    db.initialize()
+    db.upsert_wiki_page({
+        "path": "/Arch/Overview", "title": "Overview", "updated": "2025-01-01",
+        "description_snippet": "s", "content": "# Overview\nBody",
+    })
+    page = db.get_wiki_page("/Arch/Overview")
+    assert page is not None
+    assert page["content"] == "# Overview\nBody"
+    assert db.get_wiki_page("/missing") is None
+    db.close()
+
+
+def test_reindex_from_jsonl(tmp_path):
+    import json
+    db = Database(tmp_path / "index.db")
+    db.initialize()
+    wi_path = tmp_path / "work-items.jsonl"
+    wiki_path = tmp_path / "wiki-pages.jsonl"
+    wi_path.write_text(
+        json.dumps({"id": 1, "title": "Item One", "type": "Bug", "state": "Active",
+                     "area": "A", "iteration": "I", "assigned_to": "", "tags": "t1",
+                     "priority": 1, "parent_id": None, "created": "2025-01-01",
+                     "updated": "2025-01-02", "description": "desc", "acceptance_criteria": "ac"}) + "\n",
+        encoding="utf-8",
+    )
+    wiki_path.write_text(
+        json.dumps({"path": "/P", "title": "Page", "updated": "2025-01-01", "content": "body"}) + "\n",
+        encoding="utf-8",
+    )
+    db.reindex_from_jsonl(wi_path, wiki_path)
+    results = db.search_work_items("Item One")
+    assert len(results) == 1
+    assert results[0]["id"] == 1
+    wiki_results = db.search_wiki("Page")
+    assert len(wiki_results) == 1
+    db.close()

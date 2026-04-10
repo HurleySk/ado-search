@@ -9,7 +9,8 @@ import click
 from ado_search.auth import OP_COMMENTS, OP_QUERY, OP_SHOW
 from ado_search.db import Database
 from ado_search.runner import SyncResult, fetch_and_parse, run_operation
-from ado_search.sync_common import detect_deletions, write_work_item
+from ado_search.jsonl import merge_jsonl, read_jsonl, write_jsonl
+from ado_search.sync_common import prepare_work_item
 
 
 WIQL_PAGE_SIZE = 20000
@@ -66,19 +67,17 @@ async def _fetch_comments(
     return data.get("comments", [])
 
 
-async def _fetch_and_write_item(
+async def _fetch_item(
     item_id: int,
     *,
     auth_method: str,
     org: str,
     project: str,
     pat: str = "",
-    data_dir: Path,
-    db: Database,
     semaphore: asyncio.Semaphore,
     include_comments: bool = False,
-) -> str | None:
-    """Fetch a single work item and write it. Returns error message or None."""
+) -> dict | str:
+    """Fetch a single work item. Returns JSONL record dict or error string."""
     async with semaphore:
         raw = await fetch_and_parse(
             auth_method, OP_SHOW, f"#{item_id}",
@@ -87,31 +86,12 @@ async def _fetch_and_write_item(
         if isinstance(raw, str):
             return raw
 
-    # Fetch comments outside the semaphore to free the slot for other item fetches,
-    # then re-acquire to bound total concurrent API calls
     comments = []
     if include_comments:
         async with semaphore:
             comments = await _fetch_comments(item_id, auth_method, org, project, pat=pat)
 
-    write_work_item(raw, comments=comments, data_dir=data_dir, db=db)
-
-    return None
-
-
-def detect_work_item_deletions(
-    *,
-    remote_ids: set[int],
-    db: Database,
-    data_dir: Path,
-) -> list[int]:
-    """Remove local work items that no longer exist in ADO. Returns deleted IDs."""
-    return detect_deletions(
-        remote_keys=remote_ids,
-        get_local_keys=lambda: set(db.get_all_work_item_ids()),
-        delete_batch_fn=db.delete_work_items_batch,
-        path_fn=lambda item_id: data_dir / "work-items" / f"{item_id}.md",
-    )
+    return prepare_work_item(raw, comments=comments)
 
 
 ID_CHUNK_SIZE = 10000  # query in chunks of 10K IDs to stay under the 20K result limit
@@ -273,11 +253,6 @@ async def sync_work_items(
     )
 
     if odata_result is not None:
-        fetched_ids = odata_result.pop("fetched_ids", set())
-        if not dry_run and not last_sync:
-            deleted = detect_work_item_deletions(remote_ids=fetched_ids, db=db, data_dir=data_dir)
-            if deleted:
-                click.echo(f"  Removed {len(deleted)} orphaned items")
         return odata_result
 
     click.echo("  OData not available, using WIQL fallback...")
@@ -299,36 +274,48 @@ async def sync_work_items(
         click.echo(f"Would fetch {len(item_ids)} work items: {item_ids[:20]}...")
         return {"fetched": 0, "errors": 0, "dry_run": True, "would_fetch": len(item_ids)}
 
-    with db.batch():
-        semaphore = asyncio.Semaphore(max_concurrent)
-        tasks = [
-            _fetch_and_write_item(
-                item_id,
-                auth_method=auth_method,
-                org=org,
-                project=project,
-                pat=pat,
-                data_dir=data_dir,
-                db=db,
-                semaphore=semaphore,
-                include_comments=include_comments,
-            )
-            for item_id in item_ids
-        ]
+    semaphore = asyncio.Semaphore(max_concurrent)
+    tasks = [
+        _fetch_item(
+            item_id,
+            auth_method=auth_method,
+            org=org,
+            project=project,
+            pat=pat,
+            semaphore=semaphore,
+            include_comments=include_comments,
+        )
+        for item_id in item_ids
+    ]
 
-        errors: list[str] = []
-        results = await asyncio.gather(*tasks)
-        for err in results:
-            if err is not None:
-                errors.append(err)
-                click.echo(f"  Warning: {err}", err=True)
+    results = await asyncio.gather(*tasks)
 
-        # Detect deletions only on full sync (incremental doesn't have all IDs)
-        if not last_sync:
-            deleted = detect_work_item_deletions(
-                remote_ids=set(item_ids), db=db, data_dir=data_dir,
-            )
-            if deleted:
-                click.echo(f"  Removed {len(deleted)} orphaned items")
+    fetched_records: dict[int, dict] = {}
+    errors: list[str] = []
+    for r in results:
+        if isinstance(r, str):
+            errors.append(r)
+            click.echo(f"  Warning: {r}", err=True)
+        else:
+            fetched_records[r["id"]] = r
 
-    return {"fetched": len(item_ids) - len(errors), "errors": len(errors)}
+    # Write JSONL
+    wi_jsonl = data_dir / "work-items.jsonl"
+
+    if last_sync:
+        all_items = merge_jsonl(wi_jsonl, fetched_records, key="id")
+    else:
+        # Full sync — orphan detection via JSONL comparison
+        existing = read_jsonl(wi_jsonl, key="id")
+        orphan_ids = set(existing.keys()) - set(fetched_records.keys())
+        if orphan_ids:
+            click.echo(f"  Removing {len(orphan_ids)} orphaned items")
+        all_items = fetched_records
+
+    write_jsonl(wi_jsonl, all_items, sort_key="id")
+
+    # Rebuild DB index
+    wiki_jsonl = data_dir / "wiki-pages.jsonl"
+    db.reindex_from_jsonl(wi_jsonl, wiki_jsonl)
+
+    return {"fetched": len(fetched_records), "errors": len(errors)}

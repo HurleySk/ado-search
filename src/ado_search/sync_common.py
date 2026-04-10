@@ -1,54 +1,42 @@
+# src/ado_search/sync_common.py
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Callable
-
-from ado_search.db import Database
-from ado_search.markdown import work_item_to_markdown, extract_work_item_metadata
+from ado_search.markdown import extract_work_item_metadata, strip_html
 
 
-def detect_deletions(
-    *,
-    remote_keys: set,
-    get_local_keys: Callable[[], set],
-    delete_batch_fn: Callable[[list], None],
-    path_fn: Callable[[Any], Path],
-) -> list:
-    """Remove local items whose keys are absent from remote_keys.
 
-    Args:
-        remote_keys: Set of IDs/paths that still exist remotely.
-        get_local_keys: Returns the set of locally-known keys (from DB).
-        delete_batch_fn: Called once with all orphan keys to remove them from the DB.
-        path_fn: Maps a key to its markdown file path on disk.
-
-    Returns:
-        List of orphaned keys that were deleted.
-    """
-    orphans = get_local_keys() - remote_keys
-    for key in orphans:
-        md_path = path_fn(key)
-        if md_path.exists():
-            md_path.unlink()
-    if orphans:
-        delete_batch_fn(list(orphans))
-    return list(orphans)
-
-
-def write_work_item(
+def prepare_work_item(
     raw: dict,
     *,
-    comments: list[dict] | None,
-    data_dir: Path,
-    db: Database,
-) -> None:
-    """Convert a work item dict to markdown, write to disk, and upsert into DB."""
-    item_id = raw["id"]
+    comments: list[dict] | None = None,
+) -> dict:
+    """Extract metadata from a raw ADO work item into a flat JSONL-ready dict."""
     meta = extract_work_item_metadata(raw)
-    md = work_item_to_markdown(raw, comments=comments, meta=meta)
-
-    md_path = data_dir / "work-items" / f"{item_id}.md"
-    md_path.parent.mkdir(parents=True, exist_ok=True)
-    md_path.write_text(md, encoding="utf-8")
-
-    db.upsert_work_item(meta)
+    record = {
+        "id": meta["id"],
+        "title": meta["title"],
+        "type": meta["type"],
+        "state": meta["state"],
+        "area": meta["area"],
+        "iteration": meta["iteration"],
+        "assigned_to": meta["assigned_to"],
+        "tags": meta["tags"],
+        "priority": meta["priority"],
+        "parent_id": meta["parent_id"],
+        "created": meta["created"],
+        "updated": meta["updated"],
+        "description": meta["description_full"],
+        "acceptance_criteria": meta["acceptance_criteria"],
+    }
+    if comments:
+        record["comments"] = [
+            {
+                "author": c.get("createdBy", {}).get("displayName", "Unknown"),
+                "date": c.get("createdDate", "")[:10],
+                "text": strip_html(c.get("text", "")),
+            }
+            for c in comments
+        ]
+    else:
+        record["comments"] = []
+    return record

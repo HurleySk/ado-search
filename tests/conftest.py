@@ -9,8 +9,6 @@ from ado_search.db import Database
 def data_dir(tmp_path):
     d = tmp_path / ".ado-search"
     d.mkdir()
-    (d / "work-items").mkdir()
-    (d / "wiki").mkdir()
     return d
 
 

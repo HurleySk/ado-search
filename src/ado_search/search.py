@@ -35,7 +35,7 @@ def search(
             "title": r["title"],
             "type": r["type"],
             "state": r["state"],
-            "file_path": f"work-items/{r['id']}.md",
+            "file_path": f"work-items.jsonl#id={r['id']}",
             "source": "work_item",
             "description_snippet": r.get("description_snippet", ""),
         })
@@ -50,7 +50,7 @@ def search(
                 "title": r["title"],
                 "type": "Wiki",
                 "state": "",
-                "file_path": f"wiki/{clean_path}.md",
+                "file_path": f"wiki-pages.jsonl#path={clean_path}",
                 "source": "wiki",
                 "description_snippet": r.get("description_snippet", ""),
             })

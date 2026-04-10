@@ -72,7 +72,7 @@ def test_full_workflow(tmp_path):
     # 4. Search with paths format
     result = runner.invoke(main, ["search", "SSO", "--format", "paths", "--data-dir", str(data_dir)])
     assert result.exit_code == 0
-    assert "work-items" in result.output
+    assert "work-items.jsonl" in result.output
 
     # 5. Show
     result = runner.invoke(main, ["show", "12345", "--data-dir", str(data_dir)])

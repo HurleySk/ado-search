@@ -58,14 +58,17 @@ class Database:
                 priority INTEGER,
                 parent_id INTEGER,
                 created TEXT,
-                updated TEXT
+                updated TEXT,
+                description TEXT DEFAULT '',
+                acceptance_criteria TEXT DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS wiki_pages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 path TEXT UNIQUE NOT NULL,
                 title TEXT NOT NULL,
-                updated TEXT
+                updated TEXT,
+                content TEXT DEFAULT ''
             );
 
             CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(
@@ -76,6 +79,15 @@ class Database:
                 tags
             );
         """)
+        for col, default in [("description", "''"), ("acceptance_criteria", "''")]:
+            try:
+                conn.execute(f"ALTER TABLE work_items ADD COLUMN {col} TEXT DEFAULT {default}")
+            except Exception:
+                pass  # column already exists
+        try:
+            conn.execute("ALTER TABLE wiki_pages ADD COLUMN content TEXT DEFAULT ''")
+        except Exception:
+            pass
         conn.commit()
 
     def upsert_work_item(self, item: dict) -> None:
@@ -83,20 +95,23 @@ class Database:
         conn.execute(
             """INSERT INTO work_items
                (id, title, type, state, area, iteration, assigned_to, tags,
-                priority, parent_id, created, updated)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                priority, parent_id, created, updated, description, acceptance_criteria)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                 title=excluded.title, type=excluded.type, state=excluded.state,
                 area=excluded.area, iteration=excluded.iteration,
                 assigned_to=excluded.assigned_to, tags=excluded.tags,
                 priority=excluded.priority, parent_id=excluded.parent_id,
-                created=excluded.created, updated=excluded.updated
+                created=excluded.created, updated=excluded.updated,
+                description=excluded.description,
+                acceptance_criteria=excluded.acceptance_criteria
             """,
             (
                 item["id"], item["title"], item["type"], item["state"],
                 item["area"], item["iteration"], item["assigned_to"],
                 item["tags"], item["priority"], item["parent_id"],
                 item["created"], item["updated"],
+                item.get("description", ""), item.get("acceptance_criteria", ""),
             ),
         )
         conn.execute(
@@ -113,12 +128,13 @@ class Database:
     def upsert_wiki_page(self, page: dict) -> None:
         conn = self._connect()
         conn.execute(
-            """INSERT INTO wiki_pages (path, title, updated)
-               VALUES (?, ?, ?)
+            """INSERT INTO wiki_pages (path, title, updated, content)
+               VALUES (?, ?, ?, ?)
                ON CONFLICT(path) DO UPDATE SET
-                title=excluded.title, updated=excluded.updated
+                title=excluded.title, updated=excluded.updated,
+                content=excluded.content
             """,
-            (page["path"], page["title"], page["updated"]),
+            (page["path"], page["title"], page["updated"], page.get("content", "")),
         )
         conn.execute(
             "DELETE FROM search_index WHERE item_type = 'wiki' AND item_id = ?",
@@ -252,6 +268,43 @@ class Database:
         conn = self._connect()
         rows = conn.execute("SELECT path FROM wiki_pages").fetchall()
         return [row["path"] for row in rows]
+
+    def get_work_item(self, item_id: int) -> dict | None:
+        conn = self._connect()
+        row = conn.execute("SELECT * FROM work_items WHERE id = ?", (item_id,)).fetchone()
+        return dict(row) if row else None
+
+    def get_wiki_page(self, path: str) -> dict | None:
+        conn = self._connect()
+        row = conn.execute("SELECT * FROM wiki_pages WHERE path = ?", (path,)).fetchone()
+        return dict(row) if row else None
+
+    def reindex_from_jsonl(self, work_items_path: Path, wiki_pages_path: Path) -> None:
+        """Rebuild the entire DB index from JSONL files."""
+        import json
+        conn = self._connect()
+        conn.execute("DELETE FROM work_items")
+        conn.execute("DELETE FROM wiki_pages")
+        conn.execute("DELETE FROM search_index")
+        conn.commit()
+
+        with self.batch():
+            if work_items_path.exists():
+                with open(work_items_path, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            item = json.loads(line)
+                            item.setdefault("description_snippet", item.get("description", "")[:500])
+                            self.upsert_work_item(item)
+            if wiki_pages_path.exists():
+                with open(wiki_pages_path, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            page = json.loads(line)
+                            page.setdefault("description_snippet", page.get("content", "")[:500])
+                            self.upsert_wiki_page(page)
 
     def close(self) -> None:
         if self._conn:

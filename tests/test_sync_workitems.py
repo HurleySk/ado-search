@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from ado_search.db import Database
 from ado_search.runner import CommandResult
-from ado_search.sync_workitems import sync_work_items, build_wiql_query, detect_deletions
+from ado_search.sync_workitems import sync_work_items, build_wiql_query, detect_work_item_deletions
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
@@ -136,7 +136,7 @@ def test_deletion_detection(tmp_path):
     })
     (wi_dir / "999.md").write_text("old content")
 
-    deleted = detect_deletions(
+    deleted = detect_work_item_deletions(
         remote_ids={100, 200},
         db=db,
         data_dir=data_dir,

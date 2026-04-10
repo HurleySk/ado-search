@@ -8,8 +8,8 @@ import click
 
 from ado_search.auth import OP_COMMENTS, OP_QUERY, OP_SHOW
 from ado_search.db import Database
-from ado_search.markdown import work_item_to_markdown, extract_work_item_metadata
-from ado_search.runner import SyncResult, run_operation
+from ado_search.runner import SyncResult, fetch_and_parse, run_operation
+from ado_search.sync_common import detect_deletions, write_work_item
 
 
 WIQL_PAGE_SIZE = 20000
@@ -57,14 +57,13 @@ def build_wiql_query(
 async def _fetch_comments(
     work_item_id: int, auth_method: str, org: str, project: str, pat: str = "",
 ) -> list[dict]:
-    result = await run_operation(auth_method, OP_COMMENTS, org=org, project=project, pat=pat, work_item_id=work_item_id)
-    if result.returncode != 0:
+    data = await fetch_and_parse(
+        auth_method, OP_COMMENTS, f"comments for #{work_item_id}",
+        org=org, project=project, pat=pat, work_item_id=work_item_id,
+    )
+    if isinstance(data, str):
         return []
-    try:
-        data = result.parse_json()
-        return data.get("comments", [])
-    except (json.JSONDecodeError, KeyError, ValueError):
-        return []
+    return data.get("comments", [])
 
 
 async def _fetch_and_write_item(
@@ -80,45 +79,33 @@ async def _fetch_and_write_item(
 ) -> str | None:
     """Fetch a single work item and write it. Returns error message or None."""
     async with semaphore:
-        result = await run_operation(auth_method, OP_SHOW, org=org, project=project, pat=pat, work_item_id=item_id)
-        if result.returncode != 0:
-            return f"Failed to fetch #{item_id}: {result.stderr}"
-
-        try:
-            raw = result.parse_json()
-        except (json.JSONDecodeError, ValueError):
-            return f"Invalid JSON for #{item_id}"
+        raw = await fetch_and_parse(
+            auth_method, OP_SHOW, f"#{item_id}",
+            org=org, project=project, pat=pat, work_item_id=item_id,
+        )
+        if isinstance(raw, str):
+            return raw
 
         comments = await _fetch_comments(item_id, auth_method, org, project, pat=pat)
-        md = work_item_to_markdown(raw, comments=comments)
-        meta = extract_work_item_metadata(raw)
 
-        md_path = data_dir / "work-items" / f"{item_id}.md"
-        md_path.parent.mkdir(parents=True, exist_ok=True)
-        md_path.write_text(md, encoding="utf-8")
+    write_work_item(raw, comments=comments, data_dir=data_dir, db=db)
 
-        db.upsert_work_item(meta)
-
-        return None
+    return None
 
 
-def detect_deletions(
+def detect_work_item_deletions(
     *,
     remote_ids: set[int],
     db: Database,
     data_dir: Path,
 ) -> list[int]:
-    """Remove local items that no longer exist in ADO. Returns deleted IDs."""
-    local_ids = set(db.get_all_work_item_ids())
-    orphans = local_ids - remote_ids
-
-    for item_id in orphans:
-        md_path = data_dir / "work-items" / f"{item_id}.md"
-        if md_path.exists():
-            md_path.unlink()
-        db.delete_work_item(item_id)
-
-    return list(orphans)
+    """Remove local work items that no longer exist in ADO. Returns deleted IDs."""
+    return detect_deletions(
+        remote_keys=remote_ids,
+        get_local_keys=lambda: set(db.get_all_work_item_ids()),
+        delete_fn=db.delete_work_item,
+        path_fn=lambda item_id: data_dir / "work-items" / f"{item_id}.md",
+    )
 
 
 ID_CHUNK_SIZE = 10000  # query in chunks of 10K IDs to stay under the 20K result limit
@@ -140,6 +127,78 @@ def _parse_query_result(stdout: str) -> list[int]:
     return [wi["id"] for wi in items]
 
 
+async def _run_wiql(
+    auth_method: str, org: str, project: str, pat: str, **query_kwargs,
+) -> tuple[int, list[int] | str]:
+    """Run a WIQL query. Returns (0, ids) on success or (returncode, stderr) on failure."""
+    wiql = build_wiql_query(**query_kwargs, project=project)
+    result = await run_operation(auth_method, OP_QUERY, org=org, project=project, pat=pat, wiql=wiql)
+    if result.returncode != 0:
+        return result.returncode, result.stderr
+    return 0, _parse_query_result(result.stdout)
+
+
+async def _find_id_range_start(
+    auth_method: str, org: str, project: str, pat: str, **query_kwargs,
+) -> int | None:
+    """Probe ID ranges to find the first work items. Returns min ID or None."""
+    for probe_start in range(0, 200000, ID_CHUNK_SIZE):
+        rc, data = await _run_wiql(
+            auth_method, org, project, pat,
+            **query_kwargs, min_id=probe_start, max_id=probe_start + ID_CHUNK_SIZE,
+        )
+        if rc == 0 and data:
+            range_start = min(data)
+            click.echo(f"  First items found at ID ~{range_start}")
+            return range_start
+    return None
+
+
+async def _paginate_by_id_range(
+    auth_method: str, org: str, project: str, pat: str,
+    range_start: int, **query_kwargs,
+) -> list[int]:
+    """Walk ID ranges from range_start, halving chunks that exceed the 20K limit."""
+    all_ids: list[int] = []
+    min_id = range_start - 1
+    empty_chunks = 0
+
+    while empty_chunks < 3:
+        rc, data = await _run_wiql(
+            auth_method, org, project, pat,
+            **query_kwargs, min_id=min_id, max_id=min_id + ID_CHUNK_SIZE,
+        )
+
+        if rc != 0:
+            stderr = data  # _run_wiql returns stderr on failure
+            if "VS402337" in stderr:
+                click.echo(f"    Chunk {min_id}-{min_id + ID_CHUNK_SIZE} too large, halving...")
+                half = ID_CHUNK_SIZE // 2
+                for sub_start in [min_id, min_id + half]:
+                    sub_rc, sub_data = await _run_wiql(
+                        auth_method, org, project, pat,
+                        **query_kwargs, min_id=sub_start, max_id=sub_start + half,
+                    )
+                    if sub_rc == 0:
+                        all_ids.extend(sub_data)
+                min_id += ID_CHUNK_SIZE
+                empty_chunks = 0
+                continue
+            raise RuntimeError(f"WIQL query failed: {stderr}")
+
+        if not data:
+            empty_chunks += 1
+            min_id += ID_CHUNK_SIZE
+            continue
+
+        empty_chunks = 0
+        all_ids.extend(data)
+        click.echo(f"  Discovered {len(all_ids)} work items so far (IDs {min_id+1}-{min_id + ID_CHUNK_SIZE})...")
+        min_id += ID_CHUNK_SIZE
+
+    return all_ids
+
+
 async def _discover_work_item_ids(
     *,
     auth_method: str,
@@ -152,93 +211,30 @@ async def _discover_work_item_ids(
     last_sync: str,
 ) -> list[int]:
     """Discover all work item IDs, paginating by ID range to avoid the 20K WIQL limit."""
-    # First, try without chunking (works for incremental syncs and small repos)
-    wiql = build_wiql_query(
-        work_item_types=work_item_types,
-        area_paths=area_paths,
-        states=states,
-        last_sync=last_sync,
-        project=project,
+    query_kwargs = dict(
+        work_item_types=work_item_types, area_paths=area_paths,
+        states=states, last_sync=last_sync,
     )
-    result = await run_operation(auth_method, OP_QUERY, org=org, project=project, pat=pat, wiql=wiql)
 
-    if result.returncode == 0:
-        ids = _parse_query_result(result.stdout)
-        click.echo(f"  Found {len(ids)} work items")
-        return ids
+    # Try without chunking (works for incremental syncs and small repos)
+    rc, data = await _run_wiql(auth_method, org, project, pat, **query_kwargs)
+    if rc == 0:
+        click.echo(f"  Found {len(data)} work items")
+        return data
 
-    # If we hit the 20K limit, paginate by ID ranges
-    if "VS402337" not in result.stderr:
-        raise RuntimeError(f"WIQL query failed: {result.stderr}")
+    if "VS402337" not in data:  # data is stderr on failure
+        raise RuntimeError(f"WIQL query failed: {data}")
 
     click.echo("  Large dataset detected, paginating by ID range...")
 
-    # Find the ID boundaries by probing ranges
-    for probe_start in range(0, 200000, ID_CHUNK_SIZE):
-        probe_wiql = build_wiql_query(
-            work_item_types=work_item_types, area_paths=area_paths,
-            states=states, last_sync=last_sync, project=project,
-            min_id=probe_start, max_id=probe_start + ID_CHUNK_SIZE,
-        )
-        probe_result = await run_operation(auth_method, OP_QUERY, org=org, project=project, pat=pat, wiql=probe_wiql)
-        if probe_result.returncode == 0:
-            probe_ids = _parse_query_result(probe_result.stdout)
-            if probe_ids:
-                range_start = min(probe_ids)
-                click.echo(f"  First items found at ID ~{range_start}")
-                break
-    else:
+    range_start = await _find_id_range_start(auth_method, org, project, pat, **query_kwargs)
+    if range_start is None:
         click.echo("  Could not find any work items in ID range 0-200000")
         return []
 
-    # Now paginate from the discovered start
-    all_ids: list[int] = []
-    min_id = range_start - 1  # start just before the first known ID
-    empty_chunks = 0
-
-    while empty_chunks < 3:
-        wiql = build_wiql_query(
-            work_item_types=work_item_types,
-            area_paths=area_paths,
-            states=states,
-            last_sync=last_sync,
-            project=project,
-            min_id=min_id,
-            max_id=min_id + ID_CHUNK_SIZE,
-        )
-        result = await run_operation(auth_method, OP_QUERY, org=org, project=project, pat=pat, wiql=wiql)
-
-        if result.returncode != 0:
-            if "VS402337" in result.stderr:
-                click.echo(f"    Chunk {min_id}-{min_id + ID_CHUNK_SIZE} too large, halving...")
-                # Halve the chunk to fit under the limit
-                half = ID_CHUNK_SIZE // 2
-                for sub_start in [min_id, min_id + half]:
-                    sub_wiql = build_wiql_query(
-                        work_item_types=work_item_types, area_paths=area_paths,
-                        states=states, last_sync=last_sync, project=project,
-                        min_id=sub_start, max_id=sub_start + half,
-                    )
-                    sub_result = await run_operation(auth_method, OP_QUERY, org=org, project=project, pat=pat, wiql=sub_wiql)
-                    if sub_result.returncode == 0:
-                        all_ids.extend(_parse_query_result(sub_result.stdout))
-                min_id += ID_CHUNK_SIZE
-                empty_chunks = 0
-                continue
-            raise RuntimeError(f"WIQL query failed: {result.stderr}")
-
-        page_ids = _parse_query_result(result.stdout)
-
-        if not page_ids:
-            empty_chunks += 1
-            min_id += ID_CHUNK_SIZE
-            continue
-
-        empty_chunks = 0
-        all_ids.extend(page_ids)
-        click.echo(f"  Discovered {len(all_ids)} work items so far (IDs {min_id+1}-{min_id + ID_CHUNK_SIZE})...")
-        min_id += ID_CHUNK_SIZE
-
+    all_ids = await _paginate_by_id_range(
+        auth_method, org, project, pat, range_start, **query_kwargs,
+    )
     click.echo(f"  Found {len(all_ids)} total work items")
     return all_ids
 
@@ -272,7 +268,7 @@ async def sync_work_items(
     if odata_result is not None:
         fetched_ids = odata_result.pop("fetched_ids", set())
         if not dry_run and not last_sync:
-            deleted = detect_deletions(remote_ids=fetched_ids, db=db, data_dir=data_dir)
+            deleted = detect_work_item_deletions(remote_ids=fetched_ids, db=db, data_dir=data_dir)
             if deleted:
                 click.echo(f"  Removed {len(deleted)} orphaned items")
         return odata_result
@@ -321,10 +317,8 @@ async def sync_work_items(
 
         # Detect deletions only on full sync (incremental doesn't have all IDs)
         if not last_sync:
-            deleted = detect_deletions(
-                remote_ids=set(item_ids),
-                db=db,
-                data_dir=data_dir,
+            deleted = detect_work_item_deletions(
+                remote_ids=set(item_ids), db=db, data_dir=data_dir,
             )
             if deleted:
                 click.echo(f"  Removed {len(deleted)} orphaned items")

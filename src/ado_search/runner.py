@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import shutil
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import TypedDict
 
@@ -116,6 +117,33 @@ async def run_operation(
     from ado_search.auth import build_command
     cmd = build_command(operation, auth_method, org=org, project=project, **kwargs)
     return await run_command(cmd, retries=retries)
+
+
+async def fetch_and_parse(
+    auth_method: str,
+    operation: str,
+    label: str,
+    *,
+    org: str,
+    project: str,
+    pat: str = "",
+    semaphore: asyncio.Semaphore | None = None,
+    **op_kwargs,
+) -> dict | list | str:
+    """Optionally acquire semaphore, run an operation, and parse JSON.
+
+    Returns parsed JSON on success, or an error message string on failure.
+    """
+    async with semaphore if semaphore is not None else nullcontext():
+        result = await run_operation(
+            auth_method, operation, org=org, project=project, pat=pat, **op_kwargs,
+        )
+        if result.returncode != 0:
+            return f"Failed to fetch {label}: {result.stderr}"
+        try:
+            return result.parse_json()
+        except (json.JSONDecodeError, ValueError):
+            return f"Invalid JSON for {label}"
 
 
 async def run_commands_parallel(

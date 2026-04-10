@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 
 import click
@@ -9,7 +8,8 @@ import click
 from ado_search.auth import OP_WIKI_LIST, OP_WIKI_PAGE_LIST, OP_WIKI_PAGE_SHOW
 from ado_search.db import Database
 from ado_search.markdown import wiki_page_to_markdown
-from ado_search.runner import SyncResult, run_operation
+from ado_search.runner import SyncResult, fetch_and_parse, run_operation
+from ado_search.sync_common import detect_deletions
 
 
 def _flatten_wiki_pages(tree: dict) -> list[dict]:
@@ -40,35 +40,33 @@ async def _fetch_and_write_page(
     db: Database,
     semaphore: asyncio.Semaphore,
 ) -> str | None:
-    async with semaphore:
-        result = await run_operation(auth_method, OP_WIKI_PAGE_SHOW, org=org, project=project, pat=pat, wiki=wiki_name, path=page_path)
-        if result.returncode != 0:
-            return f"Failed to fetch wiki page {page_path}: {result.stderr}"
+    data = await fetch_and_parse(
+        auth_method, OP_WIKI_PAGE_SHOW, f"wiki page {page_path}",
+        org=org, project=project, pat=pat, semaphore=semaphore,
+        wiki=wiki_name, path=page_path,
+    )
+    if isinstance(data, str):
+        return data
 
-        try:
-            data = result.parse_json()
-        except (json.JSONDecodeError, ValueError):
-            return f"Invalid JSON for wiki page {page_path}"
+    content = data.get("content", "")
+    title = page_path.split("/")[-1].replace("-", " ")
+    updated = data.get("dateModified", "")[:10]
 
-        content = data.get("content", "")
-        title = page_path.split("/")[-1].replace("-", " ")
-        updated = data.get("dateModified", "")[:10]
+    md = wiki_page_to_markdown(title, content)
 
-        md = wiki_page_to_markdown(title, content)
+    file_path = data_dir / _wiki_path_to_filepath(wiki_name, page_path)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_text(md, encoding="utf-8")
 
-        file_path = data_dir / _wiki_path_to_filepath(wiki_name, page_path)
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(md, encoding="utf-8")
+    snippet = content[:500] if content else ""
+    db.upsert_wiki_page({
+        "path": page_path,
+        "title": title,
+        "updated": updated,
+        "description_snippet": snippet,
+    })
 
-        snippet = content[:500] if content else ""
-        db.upsert_wiki_page({
-            "path": page_path,
-            "title": title,
-            "updated": updated,
-            "description_snippet": snippet,
-        })
-
-        return None
+    return None
 
 
 def detect_wiki_deletions(
@@ -78,17 +76,12 @@ def detect_wiki_deletions(
     data_dir: Path,
 ) -> list[str]:
     """Remove local wiki pages that no longer exist in ADO. Returns deleted paths."""
-    local_paths = set(db.get_all_wiki_paths())
-    orphans = local_paths - remote_paths
-
-    for page_path in orphans:
-        clean = page_path.lstrip("/")
-        file_path = data_dir / "wiki" / f"{clean}.md"
-        if file_path.exists():
-            file_path.unlink()
-        db.delete_wiki_page(page_path)
-
-    return list(orphans)
+    return detect_deletions(
+        remote_keys=remote_paths,
+        get_local_keys=lambda: set(db.get_all_wiki_paths()),
+        delete_fn=db.delete_wiki_page,
+        path_fn=lambda page_path: data_dir / "wiki" / f"{page_path.lstrip('/')}.md",
+    )
 
 
 async def sync_wiki(

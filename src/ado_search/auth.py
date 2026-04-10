@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Callable
 from urllib.parse import quote
 
 ADO_RESOURCE_ID = "499b84ac-1321-427f-aa17-267ca6975798"
@@ -31,6 +32,12 @@ class OperationDef:
     use_az_rest: bool = True
     # For az CLI non-rest: the subcommand parts
     az_cli_cmd: list[str] = field(default_factory=list)
+    # For az CLI non-rest: builds extra args from kwargs (org, project already handled)
+    az_cli_args: Callable[..., list[str]] | None = None
+    # For az CLI non-rest: whether to include --project in the command
+    az_cli_include_project: bool = True
+    # For az rest: pass query_params via --url-parameters instead of query string
+    az_rest_url_parameters: bool = False
 
 
 def _resolve_url(op: OperationDef, *, org: str, project: str, **kwargs) -> str:
@@ -73,32 +80,44 @@ OPERATIONS: dict[str, OperationDef] = {
         has_body=True,
         use_az_rest=False,
         az_cli_cmd=["boards", "query"],
+        az_cli_args=lambda wiql, **_: ["--wiql", wiql],
     ),
     OP_SHOW: OperationDef(
         path="{url_project}/_apis/wit/workitems/{work_item_id}",
         query_params=["$expand=all", "api-version=7.1"],
         use_az_rest=False,
         az_cli_cmd=["boards", "work-item", "show"],
+        az_cli_args=lambda work_item_id, **_: ["--id", str(work_item_id)],
+        az_cli_include_project=False,
     ),
     OP_WIKI_LIST: OperationDef(
         path="{url_project}/_apis/wiki/wikis",
         query_params=["api-version=7.1"],
         use_az_rest=False,
         az_cli_cmd=["devops", "wiki", "list"],
+        az_cli_args=lambda **_: [],
     ),
     OP_WIKI_PAGE_LIST: OperationDef(
         path="{url_project}/_apis/wiki/wikis/{url_wiki}/pages",
         query_params=["path=/", "recursionLevel=full", "api-version=7.1"],
+        az_rest_url_parameters=True,
     ),
     OP_WIKI_PAGE_SHOW: OperationDef(
         path="{url_project}/_apis/wiki/wikis/{url_wiki}/pages",
         query_params=["path={path}", "includeContent=true", "api-version=7.1"],
+        az_rest_url_parameters=True,
     ),
     OP_COMMENTS: OperationDef(
         path="{url_project}/_apis/wit/workitems/{work_item_id}/comments",
         query_params=["api-version=7.1-preview.4"],
         use_az_rest=False,
         az_cli_cmd=["devops", "invoke"],
+        az_cli_args=lambda work_item_id, **_: [
+            "--area", "wit", "--resource", "comments",
+            "--route-parameters", f"id={work_item_id}",
+            "--api-version", "7.1-preview.4",
+        ],
+        az_cli_include_project=False,
     ),
     OP_ODATA_QUERY: OperationDef(
         raw_url=True,
@@ -121,51 +140,32 @@ def build_az_cli_command(
     if op is None:
         raise ValueError(f"Unknown operation: {operation}")
 
-    base = ["az"]
+    kwargs = dict(wiql=wiql, work_item_id=work_item_id, wiki=wiki, path=path, url=url)
 
     # Operations that use specific az CLI subcommands
-    if not op.use_az_rest:
-        if operation == OP_QUERY:
-            return [*base, *op.az_cli_cmd,
-                    "--wiql", wiql,
-                    "--org", org, "--project", project,
-                    "--output", "json"]
-        if operation == OP_SHOW:
-            return [*base, *op.az_cli_cmd,
-                    "--id", str(work_item_id),
-                    "--org", org,
-                    "--output", "json"]
-        if operation == OP_WIKI_LIST:
-            return [*base, *op.az_cli_cmd,
-                    "--org", org, "--project", project,
-                    "--output", "json"]
-        if operation == OP_COMMENTS:
-            return [*base, *op.az_cli_cmd,
-                    "--area", "wit", "--resource", "comments",
-                    "--route-parameters", f"id={work_item_id}",
-                    "--org", org,
-                    "--api-version", "7.1-preview.4",
-                    "--output", "json"]
+    if not op.use_az_rest and op.az_cli_args is not None:
+        cmd = ["az", *op.az_cli_cmd, *op.az_cli_args(**kwargs), "--org", org]
+        if op.az_cli_include_project:
+            cmd.extend(["--project", project])
+        cmd.extend(["--output", "json"])
+        return cmd
 
     # Operations that use az rest
-    api_url = _resolve_url(op, org=org, project=project, wiki=wiki, path=path,
-                           work_item_id=work_item_id, url=url)
+    api_url = _resolve_url(op, org=org, project=project, **kwargs)
 
-    # For wiki page operations, az CLI uses --url-parameters instead of query string
-    if operation in (OP_WIKI_PAGE_LIST, OP_WIKI_PAGE_SHOW):
+    # Some operations pass query params via --url-parameters instead of query string
+    if op.az_rest_url_parameters:
         url_project = quote(project or "", safe="")
         url_wiki = quote(wiki or "", safe="")
         base_url = f"{org}/{url_project}/_apis/wiki/wikis/{url_wiki}/pages"
-        url_params = list(op.query_params)
-        if operation == OP_WIKI_PAGE_SHOW:
-            url_params = [p.replace("{path}", path or "") for p in url_params]
-        return [*base, "rest", "--method", "get",
+        url_params = [p.replace("{path}", path or "") for p in op.query_params]
+        return ["az", "rest", "--method", "get",
                 "--resource", ADO_RESOURCE_ID,
                 "--url", base_url,
                 "--url-parameters", *url_params,
                 "--output", "json"]
 
-    return [*base, "rest", "--method", "get",
+    return ["az", "rest", "--method", "get",
             "--resource", ADO_RESOURCE_ID,
             "--url", api_url,
             "--output", "json"]

@@ -9,8 +9,8 @@ import click
 
 from ado_search.auth import OP_ODATA_QUERY
 from ado_search.db import Database
-from ado_search.markdown import work_item_to_markdown, extract_work_item_metadata
 from ado_search.runner import SyncResult, run_operation
+from ado_search.sync_common import write_work_item
 
 ODATA_PAGE_SIZE = 5000
 ODATA_BASE = "https://analytics.dev.azure.com"
@@ -186,17 +186,8 @@ async def sync_via_odata(
         for item in all_items:
             try:
                 ado_format = odata_to_ado_format(item)
-                item_id = ado_format["id"]
-                fetched_ids.add(item_id)
-
-                md = work_item_to_markdown(ado_format, comments=None)
-                meta = extract_work_item_metadata(ado_format)
-
-                md_path = data_dir / "work-items" / f"{item_id}.md"
-                md_path.parent.mkdir(parents=True, exist_ok=True)
-                md_path.write_text(md, encoding="utf-8")
-
-                db.upsert_work_item(meta)
+                fetched_ids.add(ado_format["id"])
+                write_work_item(ado_format, comments=None, data_dir=data_dir, db=db)
                 fetched += 1
             except Exception as e:
                 click.echo(f"  Warning: Failed to process item: {e}", err=True)

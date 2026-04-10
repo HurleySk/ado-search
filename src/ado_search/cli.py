@@ -16,6 +16,27 @@ def _default_data_dir() -> Path:
     return Path.cwd() / ".ado-search"
 
 
+def _ensure_index(data_path: Path, db: Database, *, force: bool = False) -> None:
+    """Rebuild DB index from JSONL if stale or missing."""
+    db_path = data_path / "index.db"
+    wi_jsonl = data_path / "work-items.jsonl"
+    wiki_jsonl = data_path / "wiki-pages.jsonl"
+
+    if not wi_jsonl.exists() and not wiki_jsonl.exists():
+        return
+
+    needs_reindex = force
+    if not needs_reindex:
+        db_mtime = db_path.stat().st_mtime
+        for jsonl in [wi_jsonl, wiki_jsonl]:
+            if jsonl.exists() and jsonl.stat().st_mtime > db_mtime:
+                needs_reindex = True
+                break
+
+    if needs_reindex:
+        db.reindex_from_jsonl(wi_jsonl, wiki_jsonl)
+
+
 @click.group()
 @click.version_option(package_name="ado-search")
 def main():
@@ -49,9 +70,6 @@ def init(org: str, project: str, auth_method: str, pat: str | None, data_dir: st
     db = Database(data_path / "index.db")
     db.initialize()
     db.close()
-
-    (data_path / "work-items").mkdir(exist_ok=True)
-    (data_path / "wiki").mkdir(exist_ok=True)
 
     click.echo(f"Initialized ado-search at {data_path}")
     click.echo(f"  Organization: {org}")
@@ -139,14 +157,19 @@ def search_cmd(query, type_filter, state_filter, area_filter, assigned_to, tag_f
     """Search indexed Azure DevOps data."""
     data_path = Path(data_dir) if data_dir else _default_data_dir()
 
-    if not (data_path / "index.db").exists():
-        click.echo("Error: No index found. Run 'ado-search init' and 'ado-search sync' first.", err=True)
+    wi_jsonl = data_path / "work-items.jsonl"
+    wiki_jsonl = data_path / "wiki-pages.jsonl"
+    if not wi_jsonl.exists() and not wiki_jsonl.exists():
+        click.echo("Error: No data found. Run 'ado-search sync' first.", err=True)
         raise SystemExit(1)
 
+    db_is_new = not (data_path / "index.db").exists()
     db = Database(data_path / "index.db")
     db.initialize()
 
     try:
+        _ensure_index(data_path, db, force=db_is_new)
+
         results = search(
             db, query, data_dir=data_path,
             type_filter=type_filter, state_filter=state_filter,
@@ -174,15 +197,38 @@ def show(item_id: str, data_dir: str | None):
     """Show full content of a work item or wiki page."""
     data_path = Path(data_dir) if data_dir else _default_data_dir()
 
-    wi_path = data_path / "work-items" / f"{item_id}.md"
-    if wi_path.exists():
-        click.echo(wi_path.read_text(encoding="utf-8"))
-        return
+    db_is_new = not (data_path / "index.db").exists()
+    db = Database(data_path / "index.db")
+    db.initialize()
 
-    wiki_path = data_path / "wiki" / f"{item_id.lstrip('/')}.md"
-    if wiki_path.exists():
-        click.echo(wiki_path.read_text(encoding="utf-8"))
-        return
+    try:
+        _ensure_index(data_path, db, force=db_is_new)
 
-    click.echo(f"Error: Item '{item_id}' not found in work-items or wiki.", err=True)
-    raise SystemExit(1)
+        # Try as work item ID
+        try:
+            wi_id = int(item_id)
+            item = db.get_work_item(wi_id)
+            if item:
+                from ado_search.markdown import work_item_to_markdown
+                meta = dict(item)
+                meta["description_full"] = meta.pop("description", "")
+                meta["description_snippet"] = meta["description_full"][:500]
+                md = work_item_to_markdown({}, meta=meta)
+                click.echo(md)
+                return
+        except ValueError:
+            pass
+
+        # Try as wiki path
+        wiki_path = item_id if item_id.startswith("/") else f"/{item_id}"
+        page = db.get_wiki_page(wiki_path)
+        if page:
+            from ado_search.markdown import wiki_page_to_markdown
+            click.echo(wiki_page_to_markdown(page["title"], page["content"]))
+            return
+
+        click.echo(f"Error: Item '{item_id}' not found.", err=True)
+        raise SystemExit(1)
+
+    finally:
+        db.close()

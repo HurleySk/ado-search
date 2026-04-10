@@ -34,13 +34,20 @@ def test_search_no_data_dir(tmp_path):
 
 def test_show_work_item(tmp_path):
     data_dir = tmp_path / ".ado-search"
-    wi_dir = data_dir / "work-items"
-    wi_dir.mkdir(parents=True)
-    (wi_dir / "100.md").write_text("---\nid: 100\ntitle: Test\n---\n\nDescription here\n")
+    data_dir.mkdir()
+
+    # Seed JSONL
+    wi_jsonl = data_dir / "work-items.jsonl"
+    wi_jsonl.write_text(json.dumps({
+        "id": 12345, "title": "Test Item", "type": "Bug", "state": "Active",
+        "area": "A", "iteration": "I", "assigned_to": "", "tags": "",
+        "priority": 1, "parent_id": None, "created": "2025-01-01",
+        "updated": "2025-01-02", "description": "Description here",
+        "acceptance_criteria": "", "comments": [],
+    }) + "\n", encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(main, ["show", "100",
-        "--data-dir", str(data_dir),
-    ])
+    result = runner.invoke(main, ["show", "12345", "--data-dir", str(data_dir)])
     assert result.exit_code == 0
+    assert "Test Item" in result.output
     assert "Description here" in result.output

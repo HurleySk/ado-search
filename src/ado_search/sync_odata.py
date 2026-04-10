@@ -76,7 +76,7 @@ def build_odata_url(
     params.append(f"$top={top}")
     params.append(f"$skip={skip}")
     if filter_str:
-        _filter_safe_chars = "',/() "
+        _filter_safe_chars = "',/()"
         params.append(f"$filter={quote(filter_str, safe=_filter_safe_chars)}")
 
     return base_url + "?" + "&".join(params)

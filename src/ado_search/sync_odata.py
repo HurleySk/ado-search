@@ -10,7 +10,8 @@ import click
 from ado_search.auth import OP_ODATA_QUERY
 from ado_search.db import Database
 from ado_search.runner import SyncResult, run_operation
-from ado_search.sync_common import write_work_item
+from ado_search.jsonl import merge_jsonl, read_jsonl, write_jsonl
+from ado_search.sync_common import prepare_work_item
 
 ODATA_PAGE_SIZE = 5000
 ODATA_BASE = "https://analytics.dev.azure.com"
@@ -151,7 +152,7 @@ async def sync_via_odata(
 
     # Parse first page
     if not result.stdout.strip():
-        return {"fetched": 0, "errors": 0, "fetched_ids": set()}
+        return {"fetched": 0, "errors": 0}
 
     data = result.parse_json()
     next_link = data.get("@odata.nextLink")
@@ -168,40 +169,57 @@ async def sync_via_odata(
             all_ids.extend(item.get("WorkItemId", 0) for item in page_data.get("value", []))
             next_link = page_data.get("@odata.nextLink")
         click.echo(f"Would process {len(all_ids)} work items: {all_ids[:20]}...")
-        return {"fetched": 0, "errors": 0, "dry_run": True, "would_fetch": len(all_ids), "fetched_ids": set()}
+        return {"fetched": 0, "errors": 0, "dry_run": True, "would_fetch": len(all_ids)}
 
     # Process items as each page arrives (reduces peak memory)
     fetched = 0
     errors = 0
-    fetched_ids: set[int] = set()
+    fetched_records: dict[int, dict] = {}
 
     def _process_page(items: list[dict]) -> None:
         nonlocal fetched, errors
         for item in items:
             try:
                 ado_format = odata_to_ado_format(item)
-                fetched_ids.add(ado_format["id"])
-                write_work_item(ado_format, comments=None, data_dir=data_dir, db=db)
+                record = prepare_work_item(ado_format, comments=None)
+                fetched_records[record["id"]] = record
                 fetched += 1
             except Exception as e:
                 click.echo(f"  Warning: Failed to process item: {e}", err=True)
                 errors += 1
 
-    with db.batch():
-        _process_page(data.get("value", []))
+    _process_page(data.get("value", []))
 
-        while next_link:
-            result = await run_operation(
-                auth_method, OP_ODATA_QUERY, org=org, project=project, pat=pat, url=next_link,
-            )
-            if result.returncode != 0:
-                click.echo(f"  Warning: OData pagination failed: {result.stderr}", err=True)
-                break
-            page_data = result.parse_json()
-            _process_page(page_data.get("value", []))
-            next_link = page_data.get("@odata.nextLink")
-            click.echo(f"  Processed {fetched} items via OData...")
+    while next_link:
+        result = await run_operation(
+            auth_method, OP_ODATA_QUERY, org=org, project=project, pat=pat, url=next_link,
+        )
+        if result.returncode != 0:
+            click.echo(f"  Warning: OData pagination failed: {result.stderr}", err=True)
+            break
+        page_data = result.parse_json()
+        _process_page(page_data.get("value", []))
+        next_link = page_data.get("@odata.nextLink")
+        click.echo(f"  Processed {fetched} items via OData...")
 
     click.echo(f"  OData: {fetched} work items processed")
 
-    return {"fetched": fetched, "errors": errors, "fetched_ids": fetched_ids}
+    # Write JSONL
+    wi_jsonl = data_dir / "work-items.jsonl"
+
+    if last_sync:
+        all_items = merge_jsonl(wi_jsonl, fetched_records, key="id")
+    else:
+        existing = read_jsonl(wi_jsonl, key="id")
+        orphan_ids = set(existing.keys()) - set(fetched_records.keys())
+        if orphan_ids:
+            click.echo(f"  Removing {len(orphan_ids)} orphaned items")
+        all_items = fetched_records
+
+    write_jsonl(wi_jsonl, all_items, sort_key="id")
+
+    # Rebuild DB index
+    wiki_jsonl = data_dir / "wiki-pages.jsonl"
+    db.reindex_from_jsonl(wi_jsonl, wiki_jsonl)
+
+    return {"fetched": fetched, "errors": errors}

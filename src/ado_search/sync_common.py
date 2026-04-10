@@ -4,14 +4,6 @@ from __future__ import annotations
 from ado_search.markdown import extract_work_item_metadata, strip_html
 
 
-def detect_deletions(
-    *,
-    remote_keys: set,
-    local_keys: set,
-) -> set:
-    """Return keys present locally but absent remotely."""
-    return local_keys - remote_keys
-
 
 def prepare_work_item(
     raw: dict,

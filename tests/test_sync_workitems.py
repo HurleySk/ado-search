@@ -4,8 +4,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ado_search.db import Database
+from ado_search.jsonl import read_jsonl, write_jsonl
 from ado_search.runner import CommandResult
-from ado_search.sync_workitems import sync_work_items, build_wiql_query, detect_work_item_deletions
+from ado_search.sync_workitems import sync_work_items, build_wiql_query
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
@@ -63,7 +64,7 @@ def test_build_wiql_query_with_filters():
     assert "'Active'" in q
 
 
-def test_sync_work_items_writes_files_and_indexes(tmp_path):
+def test_sync_work_items_writes_jsonl_and_indexes(tmp_path):
     data_dir = tmp_path / ".ado-search"
     data_dir.mkdir()
     (data_dir / "work-items").mkdir()
@@ -109,8 +110,13 @@ def test_sync_work_items_writes_files_and_indexes(tmp_path):
 
     assert stats["fetched"] == 2
     assert stats["errors"] == 0
-    assert (data_dir / "work-items" / "12345.md").exists()
-    assert (data_dir / "work-items" / "12346.md").exists()
+
+    # JSONL file should exist with both items
+    wi_jsonl = data_dir / "work-items.jsonl"
+    assert wi_jsonl.exists()
+    items = read_jsonl(wi_jsonl, key="id")
+    assert 12345 in items
+    assert 12346 in items
 
     results = db.search_work_items("SSO login")
     assert len(results) >= 1
@@ -120,28 +126,65 @@ def test_sync_work_items_writes_files_and_indexes(tmp_path):
     db.close()
 
 
-def test_deletion_detection(tmp_path):
+def test_deletion_detection_via_jsonl(tmp_path):
     data_dir = tmp_path / ".ado-search"
-    wi_dir = data_dir / "work-items"
-    wi_dir.mkdir(parents=True)
+    data_dir.mkdir()
+    (data_dir / "work-items").mkdir()
 
     db = Database(data_dir / "index.db")
     db.initialize()
 
-    db.upsert_work_item({
+    # Pre-populate JSONL with an orphan item (id=999) that won't be in the remote set
+    wi_jsonl = data_dir / "work-items.jsonl"
+    orphan_record = {
         "id": 999, "title": "Deleted item", "type": "Bug", "state": "Removed",
         "area": "", "iteration": "", "assigned_to": "", "tags": "",
         "priority": 3, "parent_id": None, "created": "2026-01-01",
-        "updated": "2026-01-01", "description_snippet": "Gone",
-    })
-    (wi_dir / "999.md").write_text("old content")
+        "updated": "2026-01-01", "description": "Gone", "acceptance_criteria": "",
+        "comments": [],
+    }
+    write_jsonl(wi_jsonl, {999: orphan_record}, sort_key="id")
 
-    deleted = detect_work_item_deletions(
-        remote_ids={100, 200},
-        db=db,
-        data_dir=data_dir,
-    )
-    assert 999 in deleted
-    assert not (wi_dir / "999.md").exists()
-    assert db.search_work_items("Deleted") == []
+    # The remote set only has item 12345 — so 999 should be removed after full sync
+    wiql_result = json.dumps([{"id": 12345}])
+    item_12345 = (FIXTURE_DIR / "work_item_12345.json").read_text()
+    comments_json = json.dumps({"comments": []})
+
+    async def fake_run(cmd, **kwargs):
+        cmd_str = " ".join(str(c) for c in cmd)
+        if "analytics.dev.azure.com" in cmd_str:
+            return CommandResult(command=cmd, returncode=1, stdout="", stderr="403 Forbidden")
+        if "query" in cmd_str and "--wiql" in cmd_str:
+            return CommandResult(command=cmd, returncode=0, stdout=wiql_result, stderr="")
+        if "12345" in cmd_str and "comments" not in cmd_str:
+            return CommandResult(command=cmd, returncode=0, stdout=item_12345, stderr="")
+        return CommandResult(command=cmd, returncode=0, stdout=comments_json, stderr="")
+
+    with patch("ado_search.runner.run_command", side_effect=fake_run):
+        stats = asyncio.run(sync_work_items(
+            org="https://dev.azure.com/contoso",
+            project="MyProject",
+            auth_method="az-cli",
+            data_dir=data_dir,
+            db=db,
+            work_item_types=["Bug", "User Story"],
+            area_paths=[],
+            states=[],
+            last_sync="",
+            max_concurrent=2,
+            dry_run=False,
+        ))
+
+    assert stats["fetched"] == 1
+    assert stats["errors"] == 0
+
+    # Orphan 999 should be gone from JSONL
+    items = read_jsonl(wi_jsonl, key="id")
+    assert 999 not in items
+    assert 12345 in items
+
+    # DB should not have the orphan
+    assert db.get_work_item(999) is None
+    assert db.get_work_item(12345) is not None
+
     db.close()

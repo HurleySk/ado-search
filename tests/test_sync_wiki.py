@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ado_search.db import Database
+from ado_search.jsonl import read_jsonl, write_jsonl
 from ado_search.runner import CommandResult
 from ado_search.sync_wiki import sync_wiki, _flatten_wiki_pages
 
@@ -30,33 +31,80 @@ def test_flatten_wiki_pages():
     assert "/" not in paths
 
 
-def test_wiki_deletion_detection(tmp_path):
+def test_wiki_deletion_detection_via_jsonl(tmp_path):
     data_dir = tmp_path / ".ado-search"
-    wiki_dir = data_dir / "wiki"
-    wiki_dir.mkdir(parents=True)
+    data_dir.mkdir()
 
     db = Database(data_dir / "index.db")
     db.initialize()
 
-    db.upsert_wiki_page({
+    # Pre-populate JSONL with an orphan page
+    wiki_jsonl = data_dir / "wiki-pages.jsonl"
+    orphan_record = {
         "path": "/Old-Page", "title": "Old Page", "updated": "2026-01-01",
-        "description_snippet": "Orphaned page",
-    })
-    (wiki_dir / "Old-Page.md").write_text("old content")
+        "content": "Orphaned page content",
+    }
+    current_record = {
+        "path": "/Getting-Started", "title": "Getting Started", "updated": "2026-01-01",
+        "content": "Current page",
+    }
+    write_jsonl(wiki_jsonl, {
+        "/Old-Page": orphan_record,
+        "/Getting-Started": current_record,
+    }, sort_key="path")
 
-    from ado_search.sync_wiki import detect_wiki_deletions
-    deleted = detect_wiki_deletions(
-        remote_paths={"/Current-Page"},
-        db=db,
-        data_dir=data_dir,
-    )
-    assert "/Old-Page" in deleted
-    assert not (wiki_dir / "Old-Page.md").exists()
-    assert db.search_wiki("Old") == []
+    # Simulate a sync where only /Getting-Started exists remotely
+    wiki_list = json.dumps([{"id": 1, "name": "MyWiki"}])
+    page_list = json.dumps({
+        "id": 1,
+        "path": "/",
+        "subPages": [
+            {"id": 2, "path": "/Getting-Started", "subPages": []},
+        ],
+    })
+    page_content = json.dumps({
+        "content": "# Getting Started\nWelcome!",
+        "dateModified": "2026-04-01T00:00:00Z",
+    })
+
+    call_count = {"n": 0}
+    responses = [wiki_list, page_list, page_content]
+
+    async def fake_run(cmd, **kwargs):
+        idx = call_count["n"]
+        call_count["n"] += 1
+        return CommandResult(
+            command=cmd, returncode=0,
+            stdout=responses[idx], stderr="",
+        )
+
+    with patch("ado_search.runner.run_command", side_effect=fake_run):
+        stats = asyncio.run(sync_wiki(
+            org="https://dev.azure.com/contoso",
+            project="MyProject",
+            auth_method="az-cli",
+            data_dir=data_dir,
+            db=db,
+            wiki_names=[],
+            max_concurrent=2,
+            dry_run=False,
+        ))
+
+    assert stats["fetched"] == 1
+
+    # Orphan /Old-Page should be gone from JSONL
+    pages = read_jsonl(wiki_jsonl, key="path")
+    assert "/Old-Page" not in pages
+    assert "/Getting-Started" in pages
+
+    # DB should not have the orphan
+    assert db.get_wiki_page("/Old-Page") is None
+    assert db.get_wiki_page("/Getting-Started") is not None
+
     db.close()
 
 
-def test_sync_wiki_writes_files_and_indexes(tmp_path):
+def test_sync_wiki_writes_jsonl_and_indexes(tmp_path):
     data_dir = tmp_path / ".ado-search"
     data_dir.mkdir()
 
@@ -91,7 +139,15 @@ def test_sync_wiki_writes_files_and_indexes(tmp_path):
         ))
 
     assert stats["fetched"] == 1
-    assert (data_dir / "wiki" / "Getting-Started.md").exists()
+
+    # Check JSONL file
+    wiki_jsonl = data_dir / "wiki-pages.jsonl"
+    assert wiki_jsonl.exists()
+    pages = read_jsonl(wiki_jsonl, key="path")
+    assert len(pages) >= 1
+    # The fixture has /Getting-Started
+    page_paths = list(pages.keys())
+    assert any("Getting-Started" in p for p in page_paths)
 
     results = db.search_wiki("Getting Started")
     assert len(results) >= 1

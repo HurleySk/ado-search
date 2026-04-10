@@ -213,7 +213,22 @@ def show(item_id: str, data_dir: str | None):
                 meta = dict(item)
                 meta["description_full"] = meta.pop("description", "")
                 meta["description_snippet"] = meta["description_full"][:500]
-                md = work_item_to_markdown({}, meta=meta)
+                # Load comments from JSONL (not stored in DB)
+                comments = None
+                from ado_search.jsonl import read_jsonl
+                wi_jsonl = data_path / "work-items.jsonl"
+                if wi_jsonl.exists():
+                    items = read_jsonl(wi_jsonl, key="id")
+                    jsonl_item = items.get(wi_id)
+                    if jsonl_item and jsonl_item.get("comments"):
+                        # Map from JSONL format to raw ADO format expected by markdown
+                        comments = [
+                            {"createdBy": {"displayName": c["author"]},
+                             "createdDate": c["date"],
+                             "text": c["text"]}
+                            for c in jsonl_item["comments"]
+                        ]
+                md = work_item_to_markdown({}, meta=meta, comments=comments)
                 click.echo(md)
                 return
         except ValueError:

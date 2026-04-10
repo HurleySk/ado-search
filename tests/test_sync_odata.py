@@ -4,9 +4,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ado_search.db import Database
+from ado_search.jsonl import read_jsonl
 from ado_search.runner import CommandResult
 from ado_search.sync_odata import build_odata_url, odata_to_ado_format, sync_via_odata
-from ado_search.markdown import extract_work_item_metadata, work_item_to_markdown
+from ado_search.markdown import extract_work_item_metadata
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
@@ -71,14 +72,15 @@ def test_odata_to_ado_format_null_fields():
     assert meta["assigned_to"] == ""
 
 
-def test_odata_to_ado_format_produces_valid_markdown():
+def test_odata_to_ado_format_produces_valid_record():
     with open(FIXTURE_DIR / "odata_workitems_page1.json") as f:
         data = json.load(f)
+    from ado_search.sync_common import prepare_work_item
     for odata_item in data["value"]:
         ado = odata_to_ado_format(odata_item)
-        md = work_item_to_markdown(ado, comments=None)
-        assert f"id: {odata_item['WorkItemId']}" in md
-        assert "## Description" in md or not odata_item.get("Description")
+        record = prepare_work_item(ado, comments=None)
+        assert record["id"] == odata_item["WorkItemId"]
+        assert "title" in record
 
 
 def test_build_odata_url_full_sync():
@@ -162,8 +164,13 @@ def test_sync_via_odata_success(tmp_path):
     assert stats is not None
     assert stats["fetched"] == 1
     assert stats["errors"] == 0
-    assert 100 in stats["fetched_ids"]
-    assert (data_dir / "work-items" / "100.md").exists()
+
+    # Check JSONL
+    wi_jsonl = data_dir / "work-items.jsonl"
+    assert wi_jsonl.exists()
+    items = read_jsonl(wi_jsonl, key="id")
+    assert 100 in items
+    assert items[100]["title"] == "Test item"
 
     results = db.search_work_items("Test")
     assert len(results) >= 1
@@ -243,7 +250,13 @@ def test_sync_via_odata_pagination(tmp_path):
         ))
 
     assert stats["fetched"] == 2
-    assert {1, 2} == stats["fetched_ids"]
+
+    # Check JSONL has both items
+    wi_jsonl = data_dir / "work-items.jsonl"
+    items = read_jsonl(wi_jsonl, key="id")
+    assert 1 in items
+    assert 2 in items
+
     db.close()
 
 
@@ -280,5 +293,6 @@ def test_sync_via_odata_dry_run(tmp_path):
 
     assert stats["fetched"] == 0
     assert stats["dry_run"] is True
-    assert not (data_dir / "work-items" / "1.md").exists()
+    # No JSONL should be written in dry run
+    assert not (data_dir / "work-items.jsonl").exists()
     db.close()

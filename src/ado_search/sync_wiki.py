@@ -7,9 +7,8 @@ import click
 
 from ado_search.auth import OP_WIKI_LIST, OP_WIKI_PAGE_LIST, OP_WIKI_PAGE_SHOW
 from ado_search.db import Database
-from ado_search.markdown import wiki_page_to_markdown
+from ado_search.jsonl import merge_jsonl, read_jsonl, write_jsonl
 from ado_search.runner import SyncResult, fetch_and_parse, run_operation
-from ado_search.sync_common import detect_deletions
 
 
 def _flatten_wiki_pages(tree: dict) -> list[dict]:
@@ -22,13 +21,7 @@ def _flatten_wiki_pages(tree: dict) -> list[dict]:
     return pages
 
 
-def _wiki_path_to_filepath(wiki_name: str, page_path: str) -> Path:
-    """Convert wiki path like /Architecture/Overview to wiki/Architecture/Overview.md."""
-    clean = page_path.lstrip("/")
-    return Path("wiki") / f"{clean}.md"
-
-
-async def _fetch_and_write_page(
+async def _fetch_page(
     wiki_name: str,
     page_path: str,
     *,
@@ -36,10 +29,9 @@ async def _fetch_and_write_page(
     org: str,
     project: str,
     pat: str = "",
-    data_dir: Path,
-    db: Database,
     semaphore: asyncio.Semaphore,
-) -> str | None:
+) -> dict | str:
+    """Fetch a single wiki page. Returns JSONL record dict or error string."""
     data = await fetch_and_parse(
         auth_method, OP_WIKI_PAGE_SHOW, f"wiki page {page_path}",
         org=org, project=project, pat=pat, semaphore=semaphore,
@@ -52,36 +44,12 @@ async def _fetch_and_write_page(
     title = page_path.split("/")[-1].replace("-", " ")
     updated = data.get("dateModified", "")[:10]
 
-    md = wiki_page_to_markdown(title, content)
-
-    file_path = data_dir / _wiki_path_to_filepath(wiki_name, page_path)
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    file_path.write_text(md, encoding="utf-8")
-
-    snippet = content[:500] if content else ""
-    db.upsert_wiki_page({
+    return {
         "path": page_path,
         "title": title,
         "updated": updated,
-        "description_snippet": snippet,
-    })
-
-    return None
-
-
-def detect_wiki_deletions(
-    *,
-    remote_paths: set[str],
-    db: Database,
-    data_dir: Path,
-) -> list[str]:
-    """Remove local wiki pages that no longer exist in ADO. Returns deleted paths."""
-    return detect_deletions(
-        remote_keys=remote_paths,
-        get_local_keys=lambda: set(db.get_all_wiki_paths()),
-        delete_batch_fn=db.delete_wiki_pages_batch,
-        path_fn=lambda page_path: data_dir / "wiki" / f"{page_path.lstrip('/')}.md",
-    )
+        "content": content,
+    }
 
 
 async def _list_wiki_pages(
@@ -173,34 +141,44 @@ async def sync_wiki(
     total_fetched = 0
     total_errors = enum_errors
 
-    with db.batch():
-        semaphore = asyncio.Semaphore(max_concurrent)
-        tasks = [
-            _fetch_and_write_page(
-                wiki_name, page_path,
-                auth_method=auth_method, org=org, project=project, pat=pat,
-                data_dir=data_dir, db=db, semaphore=semaphore,
-            )
-            for wiki_name, page_path in all_page_tasks
-        ]
+    semaphore = asyncio.Semaphore(max_concurrent)
+    tasks = [
+        _fetch_page(
+            wiki_name, page_path,
+            auth_method=auth_method, org=org, project=project, pat=pat,
+            semaphore=semaphore,
+        )
+        for wiki_name, page_path in all_page_tasks
+    ]
 
-        results = await asyncio.gather(*tasks)
-        for err in results:
-            if err is not None:
-                total_errors += 1
-                click.echo(f"  Warning: {err}", err=True)
-            else:
-                total_fetched += 1
+    results = await asyncio.gather(*tasks)
+
+    fetched_records: dict[str, dict] = {}
+    for r in results:
+        if isinstance(r, str):
+            total_errors += 1
+            click.echo(f"  Warning: {r}", err=True)
+        else:
+            fetched_records[r["path"]] = r
+            total_fetched += 1
+
+    # Write JSONL
+    wiki_jsonl = data_dir / "wiki-pages.jsonl"
 
     if enum_errors == 0:
-        deleted = detect_wiki_deletions(
-            remote_paths=all_remote_paths,
-            db=db,
-            data_dir=data_dir,
-        )
-        if deleted:
-            click.echo(f"  Removed {len(deleted)} orphaned wiki pages")
-    elif enum_errors > 0 and all_remote_paths:
-        click.echo("  Skipping orphan detection due to wiki enumeration errors", err=True)
+        existing = read_jsonl(wiki_jsonl, key="path")
+        orphan_paths = set(existing.keys()) - all_remote_paths
+        if orphan_paths:
+            click.echo(f"  Removing {len(orphan_paths)} orphaned wiki pages")
+        all_pages = {k: v for k, v in existing.items() if k in all_remote_paths}
+        all_pages.update(fetched_records)
+    else:
+        all_pages = merge_jsonl(wiki_jsonl, fetched_records, key="path")
+
+    write_jsonl(wiki_jsonl, all_pages, sort_key="path")
+
+    # Rebuild DB index
+    wi_jsonl = data_dir / "work-items.jsonl"
+    db.reindex_from_jsonl(wi_jsonl, wiki_jsonl)
 
     return {"fetched": total_fetched, "errors": total_errors}

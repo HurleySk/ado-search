@@ -34,9 +34,18 @@ ado-search search "setup guide" --format paths
 1. **Sync** pulls work items and wiki pages from Azure DevOps
    - Tries **OData analytics** first (fetches all items in one call — fast)
    - Falls back to **az devops CLI** if analytics isn't available
-2. Content is stored as compact **markdown files** (one per item)
-3. Metadata is indexed in **SQLite with FTS5** for fast full-text search
-4. Agents search the index, then read only the files they need — minimal context
+2. Data is stored as **sorted JSONL files** — git-friendly, diffable, one file per entity type
+3. A **SQLite FTS5 index** is derived from the JSONL and auto-rebuilt when stale
+4. Agents search the index, then use `show` to render full content — minimal context
+
+### Git-Friendly Storage
+
+Sync produces two text files that are safe to commit, push, and pull:
+
+- `work-items.jsonl` — one JSON object per line, sorted by ID
+- `wiki-pages.jsonl` — one JSON object per line, sorted by path
+
+The SQLite index (`index.db`) is `.gitignore`d — it auto-rebuilds from JSONL on first search or show.
 
 ## Commands
 
@@ -46,6 +55,17 @@ ado-search search "setup guide" --format paths
 | `ado-search sync` | Pull latest data from Azure DevOps |
 | `ado-search search "query"` | Full-text search with filters |
 | `ado-search show <id>` | Display full content of an item |
+
+## Configuration
+
+Default sync includes Bug, User Story, Epic, and Feature work item types. To include Tasks or customize:
+
+```toml
+# .ado-search/config.toml
+[sync]
+work_item_types = ["Bug", "User Story", "Task", "Epic", "Feature"]
+include_comments = false
+```
 
 ## Auth Methods
 

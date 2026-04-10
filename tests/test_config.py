@@ -9,7 +9,7 @@ def test_default_config_has_required_keys():
     assert cfg["organization"]["url"] == ""
     assert cfg["organization"]["project"] == ""
     assert cfg["auth"]["method"] == "az-cli"
-    assert cfg["sync"]["work_item_types"] == ["Bug", "User Story", "Task", "Epic", "Feature"]
+    assert cfg["sync"]["work_item_types"] == ["Bug", "User Story", "Epic", "Feature"]
     assert cfg["sync"]["area_paths"] == []
     assert cfg["sync"]["states"] == []
     assert cfg["sync"]["wiki_names"] == []

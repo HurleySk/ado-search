@@ -19,7 +19,7 @@ def default_config() -> dict:
             "method": "az-cli",
         },
         "sync": {
-            "work_item_types": ["Bug", "User Story", "Task", "Epic", "Feature"],
+            "work_item_types": ["Bug", "User Story", "Epic", "Feature"],
             "area_paths": [],
             "states": [],
             "wiki_names": [],

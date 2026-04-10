@@ -7,10 +7,10 @@ from urllib.parse import quote, urlparse
 
 import click
 
-from ado_search.auth import build_command
+from ado_search.auth import OP_ODATA_QUERY
 from ado_search.db import Database
 from ado_search.markdown import work_item_to_markdown, extract_work_item_metadata
-from ado_search.runner import run_command, run_pat_request
+from ado_search.runner import SyncResult, run_operation
 
 ODATA_PAGE_SIZE = 5000
 ODATA_BASE = "https://analytics.dev.azure.com"
@@ -128,7 +128,7 @@ async def sync_via_odata(
     states: list[str],
     last_sync: str,
     dry_run: bool = False,
-) -> dict | None:
+) -> SyncResult | None:
     """Sync work items via OData analytics. Returns stats dict or None if OData unavailable."""
     url = build_odata_url(
         org, project,
@@ -139,11 +139,9 @@ async def sync_via_odata(
     )
 
     # Probe first page to check if OData is available
-    if auth_method == "pat":
-        result = await run_pat_request("odata-query", org=org, project=project, pat=pat, url=url)
-    else:
-        cmd = build_command("odata-query", auth_method, org=org, project=project, url=url)
-        result = await run_command(cmd, retries=1)  # Only 1 attempt for availability check
+    result = await run_operation(
+        auth_method, OP_ODATA_QUERY, org=org, project=project, pat=pat, url=url, retries=1,
+    )
 
     if result.returncode != 0:
         stderr_lower = result.stderr.lower()
@@ -161,11 +159,9 @@ async def sync_via_odata(
 
     # Follow pagination
     while next_link:
-        if auth_method == "pat":
-            result = await run_pat_request("odata-query", org=org, project=project, pat=pat, url=next_link)
-        else:
-            cmd = build_command("odata-query", auth_method, org=org, project=project, url=next_link)
-            result = await run_command(cmd)
+        result = await run_operation(
+            auth_method, OP_ODATA_QUERY, org=org, project=project, pat=pat, url=next_link,
+        )
         if result.returncode != 0:
             click.echo(f"  Warning: OData pagination failed: {result.stderr}", err=True)
             break

@@ -6,18 +6,10 @@ from pathlib import Path
 
 import click
 
-from ado_search.auth import build_command
+from ado_search.auth import OP_COMMENTS, OP_QUERY, OP_SHOW
 from ado_search.db import Database
 from ado_search.markdown import work_item_to_markdown, extract_work_item_metadata
-from ado_search.runner import run_command, run_pat_request, CommandResult
-
-
-async def _run(auth_method: str, operation: str, *, org: str, project: str, pat: str = "", **kwargs) -> CommandResult:
-    """Route to PAT direct HTTP or shell command based on auth method."""
-    if auth_method == "pat":
-        return await run_pat_request(operation, org=org, project=project, pat=pat, **kwargs)
-    cmd = build_command(operation, auth_method, org=org, project=project, **kwargs)
-    return await run_command(cmd)
+from ado_search.runner import SyncResult, run_operation
 
 
 WIQL_PAGE_SIZE = 20000
@@ -65,7 +57,7 @@ def build_wiql_query(
 async def _fetch_comments(
     work_item_id: int, auth_method: str, org: str, project: str, pat: str = "",
 ) -> list[dict]:
-    result = await _run(auth_method, "comments", org=org, project=project, pat=pat, work_item_id=work_item_id)
+    result = await run_operation(auth_method, OP_COMMENTS, org=org, project=project, pat=pat, work_item_id=work_item_id)
     if result.returncode != 0:
         return []
     try:
@@ -88,7 +80,7 @@ async def _fetch_and_write_item(
 ) -> str | None:
     """Fetch a single work item and write it. Returns error message or None."""
     async with semaphore:
-        result = await _run(auth_method, "show", org=org, project=project, pat=pat, work_item_id=item_id)
+        result = await run_operation(auth_method, OP_SHOW, org=org, project=project, pat=pat, work_item_id=item_id)
         if result.returncode != 0:
             return f"Failed to fetch #{item_id}: {result.stderr}"
 
@@ -168,7 +160,7 @@ async def _discover_work_item_ids(
         last_sync=last_sync,
         project=project,
     )
-    result = await _run(auth_method, "query", org=org, project=project, pat=pat, wiql=wiql)
+    result = await run_operation(auth_method, OP_QUERY, org=org, project=project, pat=pat, wiql=wiql)
 
     if result.returncode == 0:
         ids = _parse_query_result(result.stdout)
@@ -181,20 +173,14 @@ async def _discover_work_item_ids(
 
     click.echo("  Large dataset detected, paginating by ID range...")
 
-    # Find the ID boundaries first
-    # Get min ID
-    wiql_min = build_wiql_query(
-        work_item_types=work_item_types, area_paths=area_paths,
-        states=states, last_sync=last_sync, project=project,
-    )
-    # Use a small probe to find the first item
+    # Find the ID boundaries by probing ranges
     for probe_start in range(0, 200000, ID_CHUNK_SIZE):
         probe_wiql = build_wiql_query(
             work_item_types=work_item_types, area_paths=area_paths,
             states=states, last_sync=last_sync, project=project,
             min_id=probe_start, max_id=probe_start + ID_CHUNK_SIZE,
         )
-        probe_result = await _run(auth_method, "query", org=org, project=project, pat=pat, wiql=probe_wiql)
+        probe_result = await run_operation(auth_method, OP_QUERY, org=org, project=project, pat=pat, wiql=probe_wiql)
         if probe_result.returncode == 0:
             probe_ids = _parse_query_result(probe_result.stdout)
             if probe_ids:
@@ -220,7 +206,7 @@ async def _discover_work_item_ids(
             min_id=min_id,
             max_id=min_id + ID_CHUNK_SIZE,
         )
-        result = await _run(auth_method, "query", org=org, project=project, pat=pat, wiql=wiql)
+        result = await run_operation(auth_method, OP_QUERY, org=org, project=project, pat=pat, wiql=wiql)
 
         if result.returncode != 0:
             if "VS402337" in result.stderr:
@@ -233,7 +219,7 @@ async def _discover_work_item_ids(
                         states=states, last_sync=last_sync, project=project,
                         min_id=sub_start, max_id=sub_start + half,
                     )
-                    sub_result = await _run(auth_method, "query", org=org, project=project, pat=pat, wiql=sub_wiql)
+                    sub_result = await run_operation(auth_method, OP_QUERY, org=org, project=project, pat=pat, wiql=sub_wiql)
                     if sub_result.returncode == 0:
                         all_ids.extend(_parse_query_result(sub_result.stdout))
                 min_id += ID_CHUNK_SIZE
@@ -271,7 +257,7 @@ async def sync_work_items(
     last_sync: str,
     max_concurrent: int = 5,
     dry_run: bool = False,
-) -> dict:
+) -> SyncResult:
     # Try OData analytics fast path
     from ado_search.sync_odata import sync_via_odata
 

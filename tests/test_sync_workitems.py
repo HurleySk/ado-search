@@ -80,6 +80,9 @@ def test_sync_work_items_writes_files_and_indexes(tmp_path):
 
     async def fake_run(cmd, **kwargs):
         cmd_str = " ".join(str(c) for c in cmd)
+        # OData probe — reject so it falls back to WIQL
+        if "analytics.dev.azure.com" in cmd_str:
+            return CommandResult(command=cmd, returncode=1, stdout="", stderr="403 Forbidden")
         if "query" in cmd_str and "--wiql" in cmd_str:
             return CommandResult(command=cmd, returncode=0, stdout=wiql_result, stderr="")
         if "12345" in cmd_str and "comments" not in cmd_str:
@@ -89,7 +92,7 @@ def test_sync_work_items_writes_files_and_indexes(tmp_path):
         # Comments requests
         return CommandResult(command=cmd, returncode=0, stdout=comments_json, stderr="")
 
-    with patch("ado_search.sync_workitems.run_command", side_effect=fake_run):
+    with patch("ado_search.runner.run_command", side_effect=fake_run):
         stats = asyncio.run(sync_work_items(
             org="https://dev.azure.com/contoso",
             project="MyProject",

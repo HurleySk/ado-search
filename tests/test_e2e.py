@@ -36,26 +36,31 @@ def test_full_workflow(tmp_path):
     wiki_pages = (FIXTURE_DIR / "wiki_page_list.json").read_text()
     wiki_content = (FIXTURE_DIR / "wiki_page_content.json").read_text()
 
-    async def fake_run_wi(cmd, **kwargs):
+    wiki_call_count = {"n": 0}
+    wiki_responses = [wiki_list, wiki_pages, wiki_content]
+
+    async def fake_run(cmd, **kwargs):
         cmd_str = " ".join(str(c) for c in cmd)
+        # OData probe — return failure so it falls back to WIQL
+        if "analytics.dev.azure.com" in cmd_str:
+            return CommandResult(command=cmd, returncode=1, stdout="", stderr="403 Forbidden")
+        # Work item commands
         if "--wiql" in cmd_str:
             return CommandResult(command=cmd, returncode=0, stdout=wiql_result, stderr="")
         if "12345" in cmd_str and "comments" not in cmd_str:
             return CommandResult(command=cmd, returncode=0, stdout=item_json, stderr="")
-        return CommandResult(command=cmd, returncode=0, stdout=comments_json, stderr="")
-
-    wiki_call_count = {"n": 0}
-    wiki_responses = [wiki_list, wiki_pages, wiki_content]
-
-    async def fake_run_wiki(cmd, **kwargs):
-        idx = wiki_call_count["n"]
-        wiki_call_count["n"] += 1
-        if idx < len(wiki_responses):
-            return CommandResult(command=cmd, returncode=0, stdout=wiki_responses[idx], stderr="")
+        if "comments" in cmd_str:
+            return CommandResult(command=cmd, returncode=0, stdout=comments_json, stderr="")
+        # Wiki commands — sequential responses
+        if "wiki" in cmd_str:
+            idx = wiki_call_count["n"]
+            wiki_call_count["n"] += 1
+            if idx < len(wiki_responses):
+                return CommandResult(command=cmd, returncode=0, stdout=wiki_responses[idx], stderr="")
+            return CommandResult(command=cmd, returncode=0, stdout="{}", stderr="")
         return CommandResult(command=cmd, returncode=0, stdout="{}", stderr="")
 
-    with patch("ado_search.sync_workitems.run_command", side_effect=fake_run_wi), \
-         patch("ado_search.sync_wiki.run_command", side_effect=fake_run_wiki):
+    with patch("ado_search.runner.run_command", side_effect=fake_run):
         result = runner.invoke(main, ["sync", "--data-dir", str(data_dir)])
         assert result.exit_code == 0, f"Sync failed: {result.output}"
 

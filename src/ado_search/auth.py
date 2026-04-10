@@ -1,8 +1,109 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from urllib.parse import quote
 
 ADO_RESOURCE_ID = "499b84ac-1321-427f-aa17-267ca6975798"
+
+# Operation constants — single source of truth for operation names
+OP_QUERY = "query"
+OP_SHOW = "show"
+OP_WIKI_LIST = "wiki-list"
+OP_WIKI_PAGE_LIST = "wiki-page-list"
+OP_WIKI_PAGE_SHOW = "wiki-page-show"
+OP_COMMENTS = "comments"
+OP_ODATA_QUERY = "odata-query"
+
+
+@dataclass
+class OperationDef:
+    """Defines an ADO REST API operation."""
+    method: str = "GET"
+    # URL path template — interpolated with resolve_url kwargs
+    path: str = ""
+    # Extra query parameters appended to the URL
+    query_params: list[str] = field(default_factory=list)
+    # If True, the 'url' kwarg is used as-is (e.g., OData)
+    raw_url: bool = False
+    # If True, the request has a JSON body (only for POST operations)
+    has_body: bool = False
+    # For az CLI: use az rest (True) or a specific az subcommand (False)
+    use_az_rest: bool = True
+    # For az CLI non-rest: the subcommand parts
+    az_cli_cmd: list[str] = field(default_factory=list)
+
+
+def _resolve_url(op: OperationDef, *, org: str, project: str, **kwargs) -> str:
+    """Build the full API URL from an operation definition."""
+    if op.raw_url:
+        return kwargs.get("url", "")
+
+    url_project = quote(project or "", safe="")
+    url_wiki = quote(kwargs.get("wiki") or "", safe="")
+    work_item_id = kwargs.get("work_item_id", "")
+    path = kwargs.get("path", "")
+
+    api_path = (
+        op.path
+        .replace("{url_project}", url_project)
+        .replace("{url_wiki}", url_wiki)
+        .replace("{work_item_id}", str(work_item_id))
+    )
+
+    api_url = f"{org}/{api_path}"
+
+    # Build query params
+    params = list(op.query_params)
+    if "{path}" in " ".join(op.query_params):
+        params = [p.replace("{path}", path) for p in params]
+    if "{encoded_path}" in " ".join(op.query_params):
+        params = [p.replace("{encoded_path}", quote(path or "", safe="")) for p in params]
+
+    if params:
+        api_url += "?" + "&".join(params)
+
+    return api_url
+
+
+OPERATIONS: dict[str, OperationDef] = {
+    OP_QUERY: OperationDef(
+        method="POST",
+        path="{url_project}/_apis/wit/wiql",
+        query_params=["api-version=7.1"],
+        has_body=True,
+        use_az_rest=False,
+        az_cli_cmd=["boards", "query"],
+    ),
+    OP_SHOW: OperationDef(
+        path="{url_project}/_apis/wit/workitems/{work_item_id}",
+        query_params=["$expand=all", "api-version=7.1"],
+        use_az_rest=False,
+        az_cli_cmd=["boards", "work-item", "show"],
+    ),
+    OP_WIKI_LIST: OperationDef(
+        path="{url_project}/_apis/wiki/wikis",
+        query_params=["api-version=7.1"],
+        use_az_rest=False,
+        az_cli_cmd=["devops", "wiki", "list"],
+    ),
+    OP_WIKI_PAGE_LIST: OperationDef(
+        path="{url_project}/_apis/wiki/wikis/{url_wiki}/pages",
+        query_params=["path=/", "recursionLevel=full", "api-version=7.1"],
+    ),
+    OP_WIKI_PAGE_SHOW: OperationDef(
+        path="{url_project}/_apis/wiki/wikis/{url_wiki}/pages",
+        query_params=["path={path}", "includeContent=true", "api-version=7.1"],
+    ),
+    OP_COMMENTS: OperationDef(
+        path="{url_project}/_apis/wit/workitems/{work_item_id}/comments",
+        query_params=["api-version=7.1-preview.4"],
+        use_az_rest=False,
+        az_cli_cmd=["devops", "invoke"],
+    ),
+    OP_ODATA_QUERY: OperationDef(
+        raw_url=True,
+    ),
+}
 
 
 def build_az_cli_command(
@@ -16,62 +117,58 @@ def build_az_cli_command(
     path: str | None = None,
     url: str | None = None,
 ) -> list[str]:
+    op = OPERATIONS.get(operation)
+    if op is None:
+        raise ValueError(f"Unknown operation: {operation}")
+
     base = ["az"]
 
-    if operation == "query":
-        return [*base, "boards", "query",
-                "--wiql", wiql,
-                "--org", org, "--project", project,
-                "--output", "json"]
+    # Operations that use specific az CLI subcommands
+    if not op.use_az_rest:
+        if operation == OP_QUERY:
+            return [*base, *op.az_cli_cmd,
+                    "--wiql", wiql,
+                    "--org", org, "--project", project,
+                    "--output", "json"]
+        if operation == OP_SHOW:
+            return [*base, *op.az_cli_cmd,
+                    "--id", str(work_item_id),
+                    "--org", org,
+                    "--output", "json"]
+        if operation == OP_WIKI_LIST:
+            return [*base, *op.az_cli_cmd,
+                    "--org", org, "--project", project,
+                    "--output", "json"]
+        if operation == OP_COMMENTS:
+            return [*base, *op.az_cli_cmd,
+                    "--area", "wit", "--resource", "comments",
+                    "--route-parameters", f"id={work_item_id}",
+                    "--org", org,
+                    "--api-version", "7.1-preview.4",
+                    "--output", "json"]
 
-    if operation == "show":
-        return [*base, "boards", "work-item", "show",
-                "--id", str(work_item_id),
-                "--org", org,
-                "--output", "json"]
+    # Operations that use az rest
+    api_url = _resolve_url(op, org=org, project=project, wiki=wiki, path=path,
+                           work_item_id=work_item_id, url=url)
 
-    if operation == "wiki-list":
-        return [*base, "devops", "wiki", "list",
-                "--org", org, "--project", project,
-                "--output", "json"]
-
-    if operation == "wiki-page-list":
-        # az devops wiki page show doesn't return subPages recursively,
-        # so use az rest with the wiki pages API and recursionLevel=full
+    # For wiki page operations, az CLI uses --url-parameters instead of query string
+    if operation in (OP_WIKI_PAGE_LIST, OP_WIKI_PAGE_SHOW):
         url_project = quote(project or "", safe="")
         url_wiki = quote(wiki or "", safe="")
-        api_url = f"{org}/{url_project}/_apis/wiki/wikis/{url_wiki}/pages"
+        base_url = f"{org}/{url_project}/_apis/wiki/wikis/{url_wiki}/pages"
+        url_params = list(op.query_params)
+        if operation == OP_WIKI_PAGE_SHOW:
+            url_params = [p.replace("{path}", path or "") for p in url_params]
         return [*base, "rest", "--method", "get",
                 "--resource", ADO_RESOURCE_ID,
-                "--url", api_url,
-                "--url-parameters", "path=/", "recursionLevel=full", "api-version=7.1",
+                "--url", base_url,
+                "--url-parameters", *url_params,
                 "--output", "json"]
 
-    if operation == "wiki-page-show":
-        url_project = quote(project or "", safe="")
-        url_wiki = quote(wiki or "", safe="")
-        api_url = f"{org}/{url_project}/_apis/wiki/wikis/{url_wiki}/pages"
-        return [*base, "rest", "--method", "get",
-                "--resource", ADO_RESOURCE_ID,
-                "--url", api_url,
-                "--url-parameters", f"path={path}", "includeContent=true", "api-version=7.1",
-                "--output", "json"]
-
-    if operation == "comments":
-        return [*base, "devops", "invoke",
-                "--area", "wit", "--resource", "comments",
-                "--route-parameters", f"id={work_item_id}",
-                "--org", org,
-                "--api-version", "7.1-preview.4",
-                "--output", "json"]
-
-    if operation == "odata-query":
-        return [*base, "rest", "--method", "get",
-                "--resource", ADO_RESOURCE_ID,
-                "--url", url,
-                "--output", "json"]
-
-    raise ValueError(f"Unknown operation: {operation}")
+    return [*base, "rest", "--method", "get",
+            "--resource", ADO_RESOURCE_ID,
+            "--url", api_url,
+            "--output", "json"]
 
 
 def build_powershell_command(
@@ -85,71 +182,36 @@ def build_powershell_command(
     path: str | None = None,
     url: str | None = None,
 ) -> list[str]:
+    op = OPERATIONS.get(operation)
+    if op is None:
+        raise ValueError(f"Unknown operation: {operation}")
+
     token_expr = f"(Get-AzAccessToken -ResourceUrl '{ADO_RESOURCE_ID}').Token"
     headers = '@{Authorization = "Bearer $token"; "Content-Type" = "application/json"}'
 
-    safe_org = _escape_ps(org)
-    safe_project = _escape_ps(project)
-    safe_wiki = _escape_ps(wiki)
+    api_url = _resolve_url(op, org=org, project=project, wiki=wiki, path=path,
+                           work_item_id=work_item_id, url=url)
 
-    # URL-encode project/wiki for REST API URLs (spaces, special chars)
-    url_project = quote(project or "", safe="")
-    url_wiki = quote(wiki or "", safe="")
+    # Escape for PowerShell
+    if op.raw_url:
+        safe_url = _escape_ps(api_url)
+    else:
+        safe_url = api_url  # already URL-encoded, no PS escaping needed
 
-    if operation == "query":
-        api_url = f"{safe_org}/{url_project}/_apis/wit/wiql?api-version=7.1"
+    if op.has_body and operation == OP_QUERY:
         body = '{{"query": "{wiql}"}}'.replace("{wiql}", _escape_ps(wiql))
         script = (
             f"$token = {token_expr}; "
             f"$headers = {headers}; "
             f"$body = '{body}'; "
-            f"Invoke-RestMethod -Uri '{api_url}' -Method Post -Headers $headers -Body $body | ConvertTo-Json -Depth 10"
+            f"Invoke-RestMethod -Uri '{safe_url}' -Method Post -Headers $headers -Body $body | ConvertTo-Json -Depth 10"
         )
-    elif operation == "show":
-        api_url = f"{safe_org}/{url_project}/_apis/wit/workitems/{work_item_id}?$expand=all&api-version=7.1"
-        script = (
-            f"$token = {token_expr}; "
-            f"$headers = {headers}; "
-            f"Invoke-RestMethod -Uri '{api_url}' -Method Get -Headers $headers | ConvertTo-Json -Depth 10"
-        )
-    elif operation == "wiki-list":
-        api_url = f"{safe_org}/{url_project}/_apis/wiki/wikis?api-version=7.1"
-        script = (
-            f"$token = {token_expr}; "
-            f"$headers = {headers}; "
-            f"Invoke-RestMethod -Uri '{api_url}' -Method Get -Headers $headers | ConvertTo-Json -Depth 10"
-        )
-    elif operation == "wiki-page-list":
-        api_url = f"{safe_org}/{url_project}/_apis/wiki/wikis/{url_wiki}/pages?recursionLevel=full&api-version=7.1"
-        script = (
-            f"$token = {token_expr}; "
-            f"$headers = {headers}; "
-            f"Invoke-RestMethod -Uri '{api_url}' -Method Get -Headers $headers | ConvertTo-Json -Depth 10"
-        )
-    elif operation == "wiki-page-show":
-        encoded_path = quote(path or "", safe="")
-        api_url = f"{safe_org}/{url_project}/_apis/wiki/wikis/{url_wiki}/pages?path={encoded_path}&includeContent=true&api-version=7.1"
-        script = (
-            f"$token = {token_expr}; "
-            f"$headers = {headers}; "
-            f"Invoke-RestMethod -Uri '{api_url}' -Method Get -Headers $headers | ConvertTo-Json -Depth 10"
-        )
-    elif operation == "comments":
-        api_url = f"{safe_org}/{url_project}/_apis/wit/workitems/{work_item_id}/comments?api-version=7.1-preview.4"
-        script = (
-            f"$token = {token_expr}; "
-            f"$headers = {headers}; "
-            f"Invoke-RestMethod -Uri '{api_url}' -Method Get -Headers $headers | ConvertTo-Json -Depth 10"
-        )
-    elif operation == "odata-query":
-        safe_url = _escape_ps(url)
+    else:
         script = (
             f"$token = {token_expr}; "
             f"$headers = {headers}; "
             f"Invoke-RestMethod -Uri '{safe_url}' -Method Get -Headers $headers | ConvertTo-Json -Depth 10"
         )
-    else:
-        raise ValueError(f"Unknown operation: {operation}")
 
     return ["pwsh", "-NoProfile", "-Command", script]
 
@@ -198,8 +260,12 @@ def pat_request(
     from urllib.request import Request, urlopen
     from urllib.error import HTTPError
 
-    url_project = quote(project or "", safe="")
-    url_wiki = quote(wiki or "", safe="")
+    op = OPERATIONS.get(operation)
+    if op is None:
+        raise ValueError(f"Unknown operation: {operation}")
+
+    api_url = _resolve_url(op, org=org, project=project, wiki=wiki, path=path,
+                           work_item_id=work_item_id, url=url)
 
     creds = base64.b64encode(f":{pat}".encode()).decode()
     headers = {
@@ -207,38 +273,11 @@ def pat_request(
         "Content-Type": "application/json",
     }
 
-    if operation == "query":
-        api_url = f"{org}/{url_project}/_apis/wit/wiql?api-version=7.1"
+    body = None
+    if op.has_body and operation == OP_QUERY:
         body = json.dumps({"query": wiql}).encode()
-        method = "POST"
-    elif operation == "show":
-        api_url = f"{org}/{url_project}/_apis/wit/workitems/{work_item_id}?$expand=all&api-version=7.1"
-        body = None
-        method = "GET"
-    elif operation == "wiki-list":
-        api_url = f"{org}/{url_project}/_apis/wiki/wikis?api-version=7.1"
-        body = None
-        method = "GET"
-    elif operation == "wiki-page-list":
-        api_url = f"{org}/{url_project}/_apis/wiki/wikis/{url_wiki}/pages?path=/&recursionLevel=full&api-version=7.1"
-        body = None
-        method = "GET"
-    elif operation == "wiki-page-show":
-        encoded_path = quote(path or "", safe="")
-        api_url = f"{org}/{url_project}/_apis/wiki/wikis/{url_wiki}/pages?path={encoded_path}&includeContent=true&api-version=7.1"
-        body = None
-        method = "GET"
-    elif operation == "comments":
-        api_url = f"{org}/{url_project}/_apis/wit/workitems/{work_item_id}/comments?api-version=7.1-preview.4"
-        body = None
-        method = "GET"
-    elif operation == "odata-query":
-        api_url = url
-        body = None
-        method = "GET"
-    else:
-        raise ValueError(f"Unknown operation: {operation}")
 
+    method = op.method
     req = Request(api_url, data=body, headers=headers, method=method)
     try:
         with urlopen(req, timeout=60) as resp:

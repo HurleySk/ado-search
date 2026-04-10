@@ -6,17 +6,10 @@ from pathlib import Path
 
 import click
 
-from ado_search.auth import build_command
+from ado_search.auth import OP_WIKI_LIST, OP_WIKI_PAGE_LIST, OP_WIKI_PAGE_SHOW
 from ado_search.db import Database
 from ado_search.markdown import wiki_page_to_markdown
-from ado_search.runner import run_command, run_pat_request
-
-
-async def _run_wiki(auth_method: str, operation: str, *, org: str, project: str, pat: str = "", **kwargs):
-    if auth_method == "pat":
-        return await run_pat_request(operation, org=org, project=project, pat=pat, **kwargs)
-    cmd = build_command(operation, auth_method, org=org, project=project, **kwargs)
-    return await run_command(cmd)
+from ado_search.runner import SyncResult, run_operation
 
 
 def _flatten_wiki_pages(tree: dict) -> list[dict]:
@@ -48,7 +41,7 @@ async def _fetch_and_write_page(
     semaphore: asyncio.Semaphore,
 ) -> str | None:
     async with semaphore:
-        result = await _run_wiki(auth_method, "wiki-page-show", org=org, project=project, pat=pat, wiki=wiki_name, path=page_path)
+        result = await run_operation(auth_method, OP_WIKI_PAGE_SHOW, org=org, project=project, pat=pat, wiki=wiki_name, path=page_path)
         if result.returncode != 0:
             return f"Failed to fetch wiki page {page_path}: {result.stderr}"
 
@@ -109,8 +102,8 @@ async def sync_wiki(
     wiki_names: list[str],
     max_concurrent: int = 5,
     dry_run: bool = False,
-) -> dict:
-    result = await _run_wiki(auth_method, "wiki-list", org=org, project=project, pat=pat)
+) -> SyncResult:
+    result = await run_operation(auth_method, OP_WIKI_LIST, org=org, project=project, pat=pat)
     if result.returncode != 0:
         raise RuntimeError(f"Wiki list failed: {result.stderr}")
 
@@ -128,7 +121,7 @@ async def sync_wiki(
     for wiki in wikis:
         wiki_name = wiki["name"]
 
-        result = await _run_wiki(auth_method, "wiki-page-list", org=org, project=project, pat=pat, wiki=wiki_name)
+        result = await run_operation(auth_method, OP_WIKI_PAGE_LIST, org=org, project=project, pat=pat, wiki=wiki_name)
         if result.returncode != 0:
             click.echo(f"  Warning: Failed to list pages for wiki {wiki_name}", err=True)
             total_errors += 1

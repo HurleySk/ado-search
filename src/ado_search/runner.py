@@ -5,6 +5,16 @@ import json
 import os
 import shutil
 from dataclasses import dataclass
+from typing import TypedDict
+
+
+class SyncResult(TypedDict, total=False):
+    """Standardized return type for all sync operations."""
+    fetched: int
+    errors: int
+    fetched_ids: set[int]  # only for work-item syncs that track IDs
+    dry_run: bool
+    would_fetch: int
 
 
 @dataclass
@@ -88,6 +98,24 @@ async def run_pat_request(operation: str, *, org: str, project: str, pat: str, *
             stdout="",
             stderr=str(e),
         )
+
+
+async def run_operation(
+    auth_method: str,
+    operation: str,
+    *,
+    org: str,
+    project: str,
+    pat: str = "",
+    retries: int = 3,
+    **kwargs,
+) -> CommandResult:
+    """Route to PAT direct HTTP or shell command based on auth method."""
+    if auth_method == "pat":
+        return await run_pat_request(operation, org=org, project=project, pat=pat, **kwargs)
+    from ado_search.auth import build_command
+    cmd = build_command(operation, auth_method, org=org, project=project, **kwargs)
+    return await run_command(cmd, retries=retries)
 
 
 async def run_commands_parallel(

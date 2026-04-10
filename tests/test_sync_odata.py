@@ -147,7 +147,7 @@ def test_sync_via_odata_success(tmp_path):
     async def fake_run(cmd, **kwargs):
         return CommandResult(command=cmd, returncode=0, stdout=odata_response, stderr="")
 
-    with patch("ado_search.sync_odata.run_command", side_effect=fake_run):
+    with patch("ado_search.runner.run_command", side_effect=fake_run):
         stats = asyncio.run(sync_via_odata(
             org="https://dev.azure.com/contoso",
             project="MyProject",
@@ -183,7 +183,7 @@ def test_sync_via_odata_returns_none_on_403(tmp_path):
             stderr="Forbidden(VS403527: Access to data from the Analytics OData endpoint is not available)"
         )
 
-    with patch("ado_search.sync_odata.run_command", side_effect=fake_run):
+    with patch("ado_search.runner.run_command", side_effect=fake_run):
         result = asyncio.run(sync_via_odata(
             org="https://dev.azure.com/contoso",
             project="MyProject",
@@ -232,7 +232,7 @@ def test_sync_via_odata_pagination(tmp_path):
         stdout = page1 if idx == 0 else page2
         return CommandResult(command=cmd, returncode=0, stdout=stdout, stderr="")
 
-    with patch("ado_search.sync_odata.run_command", side_effect=fake_run):
+    with patch("ado_search.runner.run_command", side_effect=fake_run):
         stats = asyncio.run(sync_via_odata(
             org="https://dev.azure.com/contoso",
             project="MyProject",
@@ -267,7 +267,7 @@ def test_sync_via_odata_dry_run(tmp_path):
     async def fake_run(cmd, **kwargs):
         return CommandResult(command=cmd, returncode=0, stdout=odata_response, stderr="")
 
-    with patch("ado_search.sync_odata.run_command", side_effect=fake_run):
+    with patch("ado_search.runner.run_command", side_effect=fake_run):
         stats = asyncio.run(sync_via_odata(
             org="https://dev.azure.com/contoso",
             project="MyProject",

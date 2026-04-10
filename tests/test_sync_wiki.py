@@ -78,7 +78,7 @@ def test_sync_wiki_writes_files_and_indexes(tmp_path):
             stdout=responses[idx], stderr="",
         )
 
-    with patch("ado_search.sync_wiki.run_command", side_effect=fake_run):
+    with patch("ado_search.runner.run_command", side_effect=fake_run):
         stats = asyncio.run(sync_wiki(
             org="https://dev.azure.com/contoso",
             project="MyProject",

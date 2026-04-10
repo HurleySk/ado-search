@@ -1,1 +1,3 @@
-__version__ = "0.5.1"
+from importlib.metadata import version as _v
+
+__version__ = _v("ado-search")

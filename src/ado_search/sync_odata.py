@@ -151,7 +151,7 @@ async def sync_via_odata(
     if not result.stdout.strip():
         return {"fetched": 0, "errors": 0, "fetched_ids": set()}
 
-    data = json.loads(result.stdout)
+    data = result.parse_json()
     all_items = data.get("value", [])
     next_link = data.get("@odata.nextLink")
 
@@ -162,7 +162,7 @@ async def sync_via_odata(
         if result.returncode != 0:
             click.echo(f"  Warning: OData pagination failed: {result.stderr}", err=True)
             break
-        page_data = json.loads(result.stdout)
+        page_data = result.parse_json()
         all_items.extend(page_data.get("value", []))
         next_link = page_data.get("@odata.nextLink")
         click.echo(f"  Fetched {len(all_items)} items via OData...")

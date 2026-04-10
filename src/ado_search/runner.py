@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 from dataclasses import dataclass
@@ -12,6 +13,13 @@ class CommandResult:
     returncode: int
     stdout: str
     stderr: str
+
+    def parse_json(self):
+        """Parse stdout as JSON, unwrapping double-serialization from ConvertTo-Json."""
+        data = json.loads(self.stdout)
+        if isinstance(data, str):
+            data = json.loads(data)
+        return data
 
 
 async def run_command(

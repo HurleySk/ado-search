@@ -49,8 +49,8 @@ async def _fetch_and_write_page(
             return f"Failed to fetch wiki page {page_path}: {result.stderr}"
 
         try:
-            data = json.loads(result.stdout)
-        except json.JSONDecodeError:
+            data = result.parse_json()
+        except (json.JSONDecodeError, ValueError):
             return f"Invalid JSON for wiki page {page_path}"
 
         content = data.get("content", "")
@@ -110,7 +110,7 @@ async def sync_wiki(
     if result.returncode != 0:
         raise RuntimeError(f"Wiki list failed: {result.stderr}")
 
-    wikis = json.loads(result.stdout)
+    wikis = result.parse_json()
     if isinstance(wikis, dict):
         wikis = wikis.get("value", [])
 
@@ -134,7 +134,7 @@ async def sync_wiki(
             total_errors += 1
             continue
 
-        tree = json.loads(result.stdout)
+        tree = result.parse_json()
         # REST API returns root page directly; az CLI may wrap in {"value": [...]}
         # or {"page": {...}}
         if isinstance(tree, dict) and "page" in tree:

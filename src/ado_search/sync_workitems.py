@@ -64,9 +64,9 @@ async def _fetch_comments(
     if result.returncode != 0:
         return []
     try:
-        data = json.loads(result.stdout)
+        data = result.parse_json()
         return data.get("comments", [])
-    except (json.JSONDecodeError, KeyError):
+    except (json.JSONDecodeError, KeyError, ValueError):
         return []
 
 
@@ -90,8 +90,8 @@ async def _fetch_and_write_item(
             return f"Failed to fetch #{item_id}: {result.stderr}"
 
         try:
-            raw = json.loads(result.stdout)
-        except json.JSONDecodeError:
+            raw = result.parse_json()
+        except (json.JSONDecodeError, ValueError):
             return f"Invalid JSON for #{item_id}"
 
         comments = await _fetch_comments(item_id, auth_method, org, project)
@@ -134,6 +134,9 @@ def _parse_query_result(stdout: str) -> list[int]:
     if not stdout.strip():
         return []
     data = json.loads(stdout)
+    # ConvertTo-Json can double-serialize — unwrap if we got a string
+    if isinstance(data, str):
+        data = json.loads(data)
     # az CLI returns a flat list; REST API returns {"workItems": [...]}
     if isinstance(data, list):
         items = data

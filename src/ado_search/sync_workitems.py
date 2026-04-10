@@ -76,6 +76,7 @@ async def _fetch_and_write_item(
     data_dir: Path,
     db: Database,
     semaphore: asyncio.Semaphore,
+    include_comments: bool = False,
 ) -> str | None:
     """Fetch a single work item and write it. Returns error message or None."""
     async with semaphore:
@@ -86,7 +87,12 @@ async def _fetch_and_write_item(
         if isinstance(raw, str):
             return raw
 
-        comments = await _fetch_comments(item_id, auth_method, org, project, pat=pat)
+    # Fetch comments outside the semaphore to free the slot for other item fetches,
+    # then re-acquire to bound total concurrent API calls
+    comments = []
+    if include_comments:
+        async with semaphore:
+            comments = await _fetch_comments(item_id, auth_method, org, project, pat=pat)
 
     write_work_item(raw, comments=comments, data_dir=data_dir, db=db)
 
@@ -103,7 +109,7 @@ def detect_work_item_deletions(
     return detect_deletions(
         remote_keys=remote_ids,
         get_local_keys=lambda: set(db.get_all_work_item_ids()),
-        delete_fn=db.delete_work_item,
+        delete_batch_fn=db.delete_work_items_batch,
         path_fn=lambda item_id: data_dir / "work-items" / f"{item_id}.md",
     )
 
@@ -252,6 +258,7 @@ async def sync_work_items(
     states: list[str],
     last_sync: str,
     max_concurrent: int = 5,
+    include_comments: bool = False,
     dry_run: bool = False,
 ) -> SyncResult:
     # Try OData analytics fast path
@@ -304,6 +311,7 @@ async def sync_work_items(
                 data_dir=data_dir,
                 db=db,
                 semaphore=semaphore,
+                include_comments=include_comments,
             )
             for item_id in item_ids
         ]

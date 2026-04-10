@@ -23,6 +23,7 @@ def default_config() -> dict:
             "area_paths": [],
             "states": [],
             "wiki_names": [],
+            "include_comments": False,
             "last_sync": "",
             "performance": {
                 "max_concurrent": 5,

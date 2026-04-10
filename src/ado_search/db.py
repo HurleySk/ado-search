@@ -12,6 +12,9 @@ def _sanitize_fts_query(query: str) -> str:
     return " ".join(f'"{t.replace(chr(34), chr(34) + chr(34))}"' for t in tokens if t)
 
 
+_BATCH_CHUNK = 500  # stay under SQLite's SQLITE_MAX_VARIABLE_NUMBER limit
+
+
 class Database:
     def __init__(self, path: Path):
         self._path = path
@@ -138,6 +141,22 @@ class Database:
         if not self._in_batch:
             conn.commit()
 
+    def delete_work_items_batch(self, item_ids: list[int]) -> None:
+        if not item_ids:
+            return
+        conn = self._connect()
+        for i in range(0, len(item_ids), _BATCH_CHUNK):
+            chunk = item_ids[i:i + _BATCH_CHUNK]
+            placeholders = ",".join("?" * len(chunk))
+            conn.execute(f"DELETE FROM work_items WHERE id IN ({placeholders})", chunk)
+            str_chunk = [str(x) for x in chunk]
+            conn.execute(
+                f"DELETE FROM search_index WHERE item_type = 'work_item' AND item_id IN ({placeholders})",
+                str_chunk,
+            )
+        if not self._in_batch:
+            conn.commit()
+
     def delete_wiki_page(self, path: str) -> None:
         conn = self._connect()
         conn.execute("DELETE FROM wiki_pages WHERE path = ?", (path,))
@@ -145,6 +164,21 @@ class Database:
             "DELETE FROM search_index WHERE item_type = 'wiki' AND item_id = ?",
             (path,),
         )
+        if not self._in_batch:
+            conn.commit()
+
+    def delete_wiki_pages_batch(self, paths: list[str]) -> None:
+        if not paths:
+            return
+        conn = self._connect()
+        for i in range(0, len(paths), _BATCH_CHUNK):
+            chunk = paths[i:i + _BATCH_CHUNK]
+            placeholders = ",".join("?" * len(chunk))
+            conn.execute(f"DELETE FROM wiki_pages WHERE path IN ({placeholders})", chunk)
+            conn.execute(
+                f"DELETE FROM search_index WHERE item_type = 'wiki' AND item_id IN ({placeholders})",
+                chunk,
+            )
         if not self._in_batch:
             conn.commit()
 

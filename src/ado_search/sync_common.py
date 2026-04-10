@@ -11,7 +11,7 @@ def detect_deletions(
     *,
     remote_keys: set,
     get_local_keys: Callable[[], set],
-    delete_fn: Callable[[Any], None],
+    delete_batch_fn: Callable[[list], None],
     path_fn: Callable[[Any], Path],
 ) -> list:
     """Remove local items whose keys are absent from remote_keys.
@@ -19,7 +19,7 @@ def detect_deletions(
     Args:
         remote_keys: Set of IDs/paths that still exist remotely.
         get_local_keys: Returns the set of locally-known keys (from DB).
-        delete_fn: Called once per orphan to remove it from the DB.
+        delete_batch_fn: Called once with all orphan keys to remove them from the DB.
         path_fn: Maps a key to its markdown file path on disk.
 
     Returns:
@@ -30,7 +30,8 @@ def detect_deletions(
         md_path = path_fn(key)
         if md_path.exists():
             md_path.unlink()
-        delete_fn(key)
+    if orphans:
+        delete_batch_fn(list(orphans))
     return list(orphans)
 
 
@@ -43,8 +44,8 @@ def write_work_item(
 ) -> None:
     """Convert a work item dict to markdown, write to disk, and upsert into DB."""
     item_id = raw["id"]
-    md = work_item_to_markdown(raw, comments=comments)
     meta = extract_work_item_metadata(raw)
+    md = work_item_to_markdown(raw, comments=comments, meta=meta)
 
     md_path = data_dir / "work-items" / f"{item_id}.md"
     md_path.parent.mkdir(parents=True, exist_ok=True)

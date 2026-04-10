@@ -79,9 +79,39 @@ def detect_wiki_deletions(
     return detect_deletions(
         remote_keys=remote_paths,
         get_local_keys=lambda: set(db.get_all_wiki_paths()),
-        delete_fn=db.delete_wiki_page,
+        delete_batch_fn=db.delete_wiki_pages_batch,
         path_fn=lambda page_path: data_dir / "wiki" / f"{page_path.lstrip('/')}.md",
     )
+
+
+async def _list_wiki_pages(
+    wiki_name: str,
+    *,
+    auth_method: str,
+    org: str,
+    project: str,
+    pat: str = "",
+) -> tuple[str, list[dict] | None]:
+    """List pages for a single wiki. Returns (wiki_name, pages) or (wiki_name, None) on error."""
+    result = await run_operation(auth_method, OP_WIKI_PAGE_LIST, org=org, project=project, pat=pat, wiki=wiki_name)
+    if result.returncode != 0:
+        click.echo(f"  Warning: Failed to list pages for wiki {wiki_name}", err=True)
+        return wiki_name, None
+
+    tree = result.parse_json()
+    # REST API returns root page directly; az CLI may wrap in {"value": [...]}
+    # or {"page": {...}}
+    if isinstance(tree, dict) and "page" in tree:
+        tree = tree["page"]
+    if isinstance(tree, dict) and "value" in tree:
+        pages_list = []
+        for item in tree["value"]:
+            if item.get("path") and item["path"] != "/":
+                pages_list.append(item)
+            pages_list.extend(_flatten_wiki_pages(item))
+        return wiki_name, pages_list
+
+    return wiki_name, _flatten_wiki_pages(tree)
 
 
 async def sync_wiki(
@@ -107,33 +137,25 @@ async def sync_wiki(
     if wiki_names:
         wikis = [w for w in wikis if w["name"] in wiki_names]
 
-    total_fetched = 0
-    total_errors = 0
+    if not wikis:
+        return {"fetched": 0, "errors": 0}
+
+    # Stage 1: Enumerate pages from all wikis concurrently
+    page_list_results = await asyncio.gather(*[
+        _list_wiki_pages(
+            w["name"], auth_method=auth_method, org=org, project=project, pat=pat,
+        )
+        for w in wikis
+    ])
+
     all_remote_paths: set[str] = set()
+    all_page_tasks: list[tuple[str, str]] = []  # (wiki_name, page_path)
+    enum_errors = 0
 
-    for wiki in wikis:
-        wiki_name = wiki["name"]
-
-        result = await run_operation(auth_method, OP_WIKI_PAGE_LIST, org=org, project=project, pat=pat, wiki=wiki_name)
-        if result.returncode != 0:
-            click.echo(f"  Warning: Failed to list pages for wiki {wiki_name}", err=True)
-            total_errors += 1
+    for wiki_name, pages in page_list_results:
+        if pages is None:
+            enum_errors += 1
             continue
-
-        tree = result.parse_json()
-        # REST API returns root page directly; az CLI may wrap in {"value": [...]}
-        # or {"page": {...}}
-        if isinstance(tree, dict) and "page" in tree:
-            tree = tree["page"]
-        if isinstance(tree, dict) and "value" in tree:
-            pages_list = []
-            for item in tree["value"]:
-                if item.get("path") and item["path"] != "/":
-                    pages_list.append(item)
-                pages_list.extend(_flatten_wiki_pages(item))
-            pages = pages_list
-        else:
-            pages = _flatten_wiki_pages(tree)
 
         if dry_run:
             paths = [p["path"] for p in pages]
@@ -142,27 +164,35 @@ async def sync_wiki(
 
         for page in pages:
             all_remote_paths.add(page["path"])
+            all_page_tasks.append((wiki_name, page["path"]))
 
-        with db.batch():
-            semaphore = asyncio.Semaphore(max_concurrent)
-            tasks = [
-                _fetch_and_write_page(
-                    wiki_name, page["path"],
-                    auth_method=auth_method, org=org, project=project, pat=pat,
-                    data_dir=data_dir, db=db, semaphore=semaphore,
-                )
-                for page in pages
-            ]
+    if dry_run:
+        return {"fetched": 0, "errors": enum_errors}
 
-            results = await asyncio.gather(*tasks)
-            for err in results:
-                if err is not None:
-                    total_errors += 1
-                    click.echo(f"  Warning: {err}", err=True)
-                else:
-                    total_fetched += 1
+    # Stage 2: Fetch all pages across all wikis with a shared semaphore
+    total_fetched = 0
+    total_errors = enum_errors
 
-    if not dry_run:
+    with db.batch():
+        semaphore = asyncio.Semaphore(max_concurrent)
+        tasks = [
+            _fetch_and_write_page(
+                wiki_name, page_path,
+                auth_method=auth_method, org=org, project=project, pat=pat,
+                data_dir=data_dir, db=db, semaphore=semaphore,
+            )
+            for wiki_name, page_path in all_page_tasks
+        ]
+
+        results = await asyncio.gather(*tasks)
+        for err in results:
+            if err is not None:
+                total_errors += 1
+                click.echo(f"  Warning: {err}", err=True)
+            else:
+                total_fetched += 1
+
+    if enum_errors == 0:
         deleted = detect_wiki_deletions(
             remote_paths=all_remote_paths,
             db=db,
@@ -170,5 +200,7 @@ async def sync_wiki(
         )
         if deleted:
             click.echo(f"  Removed {len(deleted)} orphaned wiki pages")
+    elif enum_errors > 0 and all_remote_paths:
+        click.echo("  Skipping orphan detection due to wiki enumeration errors", err=True)
 
     return {"fetched": total_fetched, "errors": total_errors}

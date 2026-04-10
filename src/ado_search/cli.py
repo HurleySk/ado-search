@@ -99,6 +99,7 @@ def sync(data_dir: str | None, dry_run: bool):
             states=sync_cfg.get("states", []),
             last_sync=sync_cfg.get("last_sync", ""),
             max_concurrent=sync_cfg.get("performance", {}).get("max_concurrent", 5),
+            include_comments=sync_cfg.get("include_comments", False),
             dry_run=dry_run,
         ))
         click.echo(f"  Work items: {wi_stats['fetched']} synced, {wi_stats['errors']} errors")

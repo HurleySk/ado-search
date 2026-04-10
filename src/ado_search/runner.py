@@ -85,7 +85,9 @@ async def run_pat_request(operation: str, *, org: str, project: str, pat: str, *
     """Execute an ADO API call using PAT auth. Returns CommandResult for compatibility."""
     from ado_search.auth import pat_request
     try:
-        data = pat_request(operation, org=org, project=project, pat=pat, **kwargs)
+        data = await asyncio.to_thread(
+            pat_request, operation, org=org, project=project, pat=pat, **kwargs
+        )
         return CommandResult(
             command=["pat_request", operation],
             returncode=0,

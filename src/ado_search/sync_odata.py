@@ -154,36 +154,30 @@ async def sync_via_odata(
         return {"fetched": 0, "errors": 0, "fetched_ids": set()}
 
     data = result.parse_json()
-    all_items = data.get("value", [])
     next_link = data.get("@odata.nextLink")
 
-    # Follow pagination
-    while next_link:
-        result = await run_operation(
-            auth_method, OP_ODATA_QUERY, org=org, project=project, pat=pat, url=next_link,
-        )
-        if result.returncode != 0:
-            click.echo(f"  Warning: OData pagination failed: {result.stderr}", err=True)
-            break
-        page_data = result.parse_json()
-        all_items.extend(page_data.get("value", []))
-        next_link = page_data.get("@odata.nextLink")
-        click.echo(f"  Fetched {len(all_items)} items via OData...")
-
-    click.echo(f"  OData returned {len(all_items)} work items")
-
     if dry_run:
-        ids = [item.get("WorkItemId", 0) for item in all_items]
-        click.echo(f"Would process {len(all_items)} work items: {ids[:20]}...")
-        return {"fetched": 0, "errors": 0, "dry_run": True, "would_fetch": len(all_items), "fetched_ids": set()}
+        all_ids = [item.get("WorkItemId", 0) for item in data.get("value", [])]
+        while next_link:
+            result = await run_operation(
+                auth_method, OP_ODATA_QUERY, org=org, project=project, pat=pat, url=next_link,
+            )
+            if result.returncode != 0:
+                break
+            page_data = result.parse_json()
+            all_ids.extend(item.get("WorkItemId", 0) for item in page_data.get("value", []))
+            next_link = page_data.get("@odata.nextLink")
+        click.echo(f"Would process {len(all_ids)} work items: {all_ids[:20]}...")
+        return {"fetched": 0, "errors": 0, "dry_run": True, "would_fetch": len(all_ids), "fetched_ids": set()}
 
-    # Process items
+    # Process items as each page arrives (reduces peak memory)
     fetched = 0
     errors = 0
     fetched_ids: set[int] = set()
 
-    with db.batch():
-        for item in all_items:
+    def _process_page(items: list[dict]) -> None:
+        nonlocal fetched, errors
+        for item in items:
             try:
                 ado_format = odata_to_ado_format(item)
                 fetched_ids.add(ado_format["id"])
@@ -192,5 +186,22 @@ async def sync_via_odata(
             except Exception as e:
                 click.echo(f"  Warning: Failed to process item: {e}", err=True)
                 errors += 1
+
+    with db.batch():
+        _process_page(data.get("value", []))
+
+        while next_link:
+            result = await run_operation(
+                auth_method, OP_ODATA_QUERY, org=org, project=project, pat=pat, url=next_link,
+            )
+            if result.returncode != 0:
+                click.echo(f"  Warning: OData pagination failed: {result.stderr}", err=True)
+                break
+            page_data = result.parse_json()
+            _process_page(page_data.get("value", []))
+            next_link = page_data.get("@odata.nextLink")
+            click.echo(f"  Processed {fetched} items via OData...")
+
+    click.echo(f"  OData: {fetched} work items processed")
 
     return {"fetched": fetched, "errors": errors, "fetched_ids": fetched_ids}

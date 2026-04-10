@@ -67,8 +67,9 @@ def extract_work_item_metadata(raw: dict) -> dict:
     }
 
 
-def work_item_to_markdown(raw: dict, *, comments: list[dict] | None = None) -> str:
-    meta = extract_work_item_metadata(raw)
+def work_item_to_markdown(raw: dict, *, comments: list[dict] | None = None, meta: dict | None = None) -> str:
+    if meta is None:
+        meta = extract_work_item_metadata(raw)
 
     lines = [
         "---",

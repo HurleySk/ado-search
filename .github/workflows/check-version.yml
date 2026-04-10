@@ -1,0 +1,41 @@
+name: Check version alignment
+
+on:
+  push:
+    paths:
+      - "pyproject.toml"
+      - "src/ado_search/__init__.py"
+  pull_request:
+    paths:
+      - "pyproject.toml"
+      - "src/ado_search/__init__.py"
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify pyproject.toml and __init__.py versions match
+        run: |
+          TOML_VERSION=$(python3 -c "
+          import tomllib
+          with open('pyproject.toml', 'rb') as f:
+              print(tomllib.load(f)['project']['version'])
+          ")
+          INIT_VERSION=$(python3 -c "
+          import re
+          with open('src/ado_search/__init__.py') as f:
+              for line in f:
+                  m = re.match(r'^__version__\s*=\s*\"(.+?)\"', line)
+                  if m:
+                      print(m.group(1))
+                      break
+          ")
+          echo "pyproject.toml version: $TOML_VERSION"
+          echo "__init__.py version:    $INIT_VERSION"
+          if [ "$TOML_VERSION" != "$INIT_VERSION" ]; then
+            echo "::error::Version mismatch! pyproject.toml=$TOML_VERSION but __init__.py=$INIT_VERSION"
+            exit 1
+          fi
+          echo "Versions match."

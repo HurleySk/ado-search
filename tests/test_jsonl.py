@@ -67,3 +67,34 @@ def test_write_jsonl_string_sort_key(tmp_path):
     lines = path.read_text(encoding="utf-8").strip().split("\n")
     assert json.loads(lines[0])["path"] == "/A/Page"
     assert json.loads(lines[1])["path"] == "/Z/Page"
+
+
+from ado_search.sync_common import prepare_work_item
+
+
+def test_prepare_work_item_returns_jsonl_record():
+    raw = {
+        "id": 100,
+        "fields": {
+            "System.Title": "Test",
+            "System.WorkItemType": "Bug",
+            "System.State": "Active",
+            "System.AreaPath": "Area",
+            "System.IterationPath": "Iter",
+            "System.AssignedTo": {"uniqueName": "u@e.com"},
+            "System.Tags": "t1; t2",
+            "Microsoft.VSTS.Common.Priority": 1,
+            "System.Parent": None,
+            "System.CreatedDate": "2025-01-01T00:00:00Z",
+            "System.ChangedDate": "2025-01-02T00:00:00Z",
+            "System.Description": "<p>Desc</p>",
+            "Microsoft.VSTS.Common.AcceptanceCriteria": "<p>AC</p>",
+        },
+    }
+    record = prepare_work_item(raw, comments=[])
+    assert record["id"] == 100
+    assert record["title"] == "Test"
+    assert record["description"] == "Desc"
+    assert record["acceptance_criteria"] == "AC"
+    assert record["tags"] == "t1,t2"
+    assert record["comments"] == []

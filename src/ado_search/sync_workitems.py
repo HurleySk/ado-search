@@ -223,6 +223,50 @@ async def _discover_work_item_ids(
     return all_ids
 
 
+async def fetch_specific_work_items(
+    *,
+    item_ids: list[int],
+    org: str,
+    project: str,
+    auth_method: str,
+    pat: str = "",
+    data_dir: Path,
+    max_concurrent: int = 5,
+    dry_run: bool = False,
+) -> SyncResult:
+    """Fetch specific work items by ID and merge them into the local store."""
+    if dry_run:
+        click.echo(f"Would fetch {len(item_ids)} work items: {item_ids}")
+        return {"fetched": 0, "errors": 0, "dry_run": True, "would_fetch": len(item_ids)}
+
+    semaphore = asyncio.Semaphore(max_concurrent)
+    tasks = [
+        _fetch_item(
+            item_id,
+            auth_method=auth_method,
+            org=org,
+            project=project,
+            pat=pat,
+            semaphore=semaphore,
+        )
+        for item_id in item_ids
+    ]
+
+    results = await asyncio.gather(*tasks)
+
+    fetched_records, errors = split_results(results, key="id")
+    for e in errors:
+        click.echo(f"  Warning: {e}", err=True)
+
+    wi_jsonl = data_dir / "work-items.jsonl"
+    finalize_jsonl(
+        wi_jsonl, fetched_records,
+        key="id", sort_key="id", is_incremental=True,
+    )
+
+    return {"fetched": len(fetched_records), "errors": len(errors)}
+
+
 async def sync_work_items(
     *,
     org: str,

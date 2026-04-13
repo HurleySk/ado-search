@@ -249,3 +249,55 @@ def show(item_id: str, data_dir: str | None):
 
     finally:
         db.close()
+
+
+@main.command()
+@click.argument("ids", nargs=-1, type=int, required=True)
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Data directory (default: ./.ado-search)")
+@click.option("--dry-run", is_flag=True, help="Preview without writing")
+def fetch(ids: tuple[int, ...], data_dir: str | None, dry_run: bool):
+    """Fetch specific work items by ID and add to local store."""
+    data_path = Path(data_dir) if data_dir else _default_data_dir()
+    config_path = data_path / "config.toml"
+
+    if not config_path.exists():
+        click.echo("Error: Not initialized. Run 'ado-search init' first.", err=True)
+        raise SystemExit(1)
+
+    cfg = load_config(config_path)
+    org = cfg["organization"]["url"]
+    project = cfg["organization"]["project"]
+    auth_method = cfg["auth"]["method"]
+
+    pat = ""
+    if auth_method == "pat":
+        from ado_search.auth import get_pat
+        pat = get_pat(cfg)
+
+    db = Database(data_path / "index.db")
+    db.initialize()
+
+    try:
+        from ado_search.sync_workitems import fetch_specific_work_items
+
+        click.echo(f"Fetching {len(ids)} work item(s): {list(ids)}")
+        stats = asyncio.run(fetch_specific_work_items(
+            item_ids=list(ids),
+            org=org,
+            project=project,
+            auth_method=auth_method,
+            pat=pat,
+            data_dir=data_path,
+            max_concurrent=cfg["sync"].get("performance", {}).get("max_concurrent", 5),
+            dry_run=dry_run,
+        ))
+
+        if not dry_run:
+            wi_jsonl = data_path / "work-items.jsonl"
+            wiki_jsonl = data_path / "wiki-pages.jsonl"
+            _ensure_index(data_path, db, force=True)
+            click.echo(f"Fetched {stats['fetched']} work item(s), {stats['errors']} error(s).")
+
+    finally:
+        db.close()

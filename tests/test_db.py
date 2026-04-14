@@ -306,6 +306,38 @@ def test_get_wiki_page_by_path(tmp_path):
     db.close()
 
 
+def test_upsert_work_item_with_story_points(tmp_path):
+    db = Database(tmp_path / "index.db")
+    db.initialize()
+    db.upsert_work_item({
+        "id": 1, "title": "Story with points", "type": "User Story",
+        "state": "Active", "area": "", "iteration": "", "assigned_to": "",
+        "tags": "", "priority": 2, "parent_id": None,
+        "created": "2026-01-01", "updated": "2026-01-02",
+        "description_snippet": "test", "story_points": 5.0,
+    })
+    item = db.get_work_item(1)
+    assert item is not None
+    assert item["story_points"] == 5.0
+    db.close()
+
+
+def test_upsert_work_item_null_story_points(tmp_path):
+    db = Database(tmp_path / "index.db")
+    db.initialize()
+    db.upsert_work_item({
+        "id": 2, "title": "No points", "type": "Bug",
+        "state": "Active", "area": "", "iteration": "", "assigned_to": "",
+        "tags": "", "priority": 1, "parent_id": None,
+        "created": "2026-01-01", "updated": "2026-01-02",
+        "description_snippet": "test", "story_points": None,
+    })
+    item = db.get_work_item(2)
+    assert item is not None
+    assert item["story_points"] is None
+    db.close()
+
+
 def test_reindex_from_jsonl(tmp_path):
     import json
     db = Database(tmp_path / "index.db")

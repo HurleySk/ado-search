@@ -61,7 +61,8 @@ class Database:
                 created TEXT,
                 updated TEXT,
                 description TEXT DEFAULT '',
-                acceptance_criteria TEXT DEFAULT ''
+                acceptance_criteria TEXT DEFAULT '',
+                story_points REAL DEFAULT NULL
             );
 
             CREATE TABLE IF NOT EXISTS wiki_pages (
@@ -80,9 +81,13 @@ class Database:
                 tags
             );
         """)
-        for col, default in [("description", "''"), ("acceptance_criteria", "''")]:
+        for col, col_type, default in [
+            ("description", "TEXT", "''"),
+            ("acceptance_criteria", "TEXT", "''"),
+            ("story_points", "REAL", "NULL"),
+        ]:
             try:
-                conn.execute(f"ALTER TABLE work_items ADD COLUMN {col} TEXT DEFAULT {default}")
+                conn.execute(f"ALTER TABLE work_items ADD COLUMN {col} {col_type} DEFAULT {default}")
             except Exception:
                 pass  # column already exists
         try:
@@ -96,8 +101,9 @@ class Database:
         conn.execute(
             """INSERT INTO work_items
                (id, title, type, state, area, iteration, assigned_to, tags,
-                priority, parent_id, created, updated, description, acceptance_criteria)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                priority, parent_id, created, updated, description, acceptance_criteria,
+                story_points)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                 title=excluded.title, type=excluded.type, state=excluded.state,
                 area=excluded.area, iteration=excluded.iteration,
@@ -105,7 +111,8 @@ class Database:
                 priority=excluded.priority, parent_id=excluded.parent_id,
                 created=excluded.created, updated=excluded.updated,
                 description=excluded.description,
-                acceptance_criteria=excluded.acceptance_criteria
+                acceptance_criteria=excluded.acceptance_criteria,
+                story_points=excluded.story_points
             """,
             (
                 item["id"], item["title"], item["type"], item["state"],
@@ -113,6 +120,7 @@ class Database:
                 item["tags"], item["priority"], item["parent_id"],
                 item["created"], item["updated"],
                 item.get("description", ""), item.get("acceptance_criteria", ""),
+                item.get("story_points"),
             ),
         )
         if not self._skip_fts_delete:

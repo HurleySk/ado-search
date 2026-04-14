@@ -1,0 +1,46 @@
+{
+  "id": 12345,
+  "fields": {
+    "System.Title": "Login fails with SSO redirect",
+    "System.WorkItemType": "Bug",
+    "System.State": "Active",
+    "System.AreaPath": "MyProject\\Auth",
+    "System.IterationPath": "MyProject\\Sprint 42",
+    "System.AssignedTo": {
+      "uniqueName": "jdoe@contoso.com",
+      "displayName": "Jane Doe"
+    },
+    "System.Tags": "sso; authentication; p1",
+    "Microsoft.VSTS.Common.Priority": 1,
+    "System.Parent": 12300,
+    "System.CreatedDate": "2026-03-15T10:00:00Z",
+    "System.ChangedDate": "2026-04-01T14:30:00Z",
+    "System.Description": "<p>When a user attempts to log in via SSO, the redirect fails with a 403 error.</p><p><img src=\"https://dev.azure.com/contoso/_apis/wit/attachments/aaa-bbb-ccc\" alt=\"screenshot\"/></p>",
+    "Microsoft.VSTS.Common.AcceptanceCriteria": "<p>SSO redirect completes successfully for all IdP configurations</p><img src=\"https://dev.azure.com/contoso/_apis/wit/attachments/ddd-eee-fff\" />"
+  },
+  "relations": [
+    {
+      "rel": "AttachedFile",
+      "url": "https://dev.azure.com/contoso/MyProject/_apis/wit/attachments/111-222-333?fileName=screenshot.png",
+      "attributes": {
+        "name": "screenshot.png",
+        "resourceSize": 45321
+      }
+    },
+    {
+      "rel": "AttachedFile",
+      "url": "https://dev.azure.com/contoso/MyProject/_apis/wit/attachments/444-555-666?fileName=design-doc.pdf",
+      "attributes": {
+        "name": "design-doc.pdf",
+        "resourceSize": 102400
+      }
+    },
+    {
+      "rel": "System.LinkTypes.Hierarchy-Reverse",
+      "url": "https://dev.azure.com/contoso/MyProject/_apis/wit/workItems/12300",
+      "attributes": {
+        "name": "Parent"
+      }
+    }
+  ]
+}

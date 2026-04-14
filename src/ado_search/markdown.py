@@ -12,6 +12,11 @@ class _HTMLStripper(HTMLParser):
     def handle_starttag(self, tag, attrs):
         if tag in ("p", "div", "br", "li") and self._parts:
             self._parts.append("\n")
+        if tag == "img":
+            attrs_dict = dict(attrs)
+            src = attrs_dict.get("src", "")
+            if src and src.startswith("attachments/"):
+                self._parts.append(f"[image: {src}]")
 
     def handle_data(self, data):
         self._parts.append(data)
@@ -77,7 +82,23 @@ def extract_work_item_metadata(raw: dict) -> dict:
     }
 
 
-def work_item_to_markdown(raw: dict, *, comments: list[dict] | None = None, meta: dict | None = None) -> str:
+def _format_size(size: int) -> str:
+    """Format byte count as human-readable size."""
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
+def work_item_to_markdown(
+    raw: dict,
+    *,
+    comments: list[dict] | None = None,
+    meta: dict | None = None,
+    attachments: list[dict] | None = None,
+    inline_images: list[dict] | None = None,
+) -> str:
     if meta is None:
         meta = extract_work_item_metadata(raw)
 
@@ -118,6 +139,27 @@ def work_item_to_markdown(raw: dict, *, comments: list[dict] | None = None, meta
             lines.append(f"### {date} — {author}")
             lines.append(text)
             lines.append("")
+
+    if attachments:
+        lines.append("## Attachments")
+        for a in attachments:
+            size_str = _format_size(a.get("size", 0)) if a.get("size") else ""
+            path = a.get("local_path", "")
+            name = a.get("name", "unknown")
+            if size_str:
+                lines.append(f"- {name} ({size_str}) \u2192 {path}")
+            else:
+                lines.append(f"- {name} \u2192 {path}")
+        lines.append("")
+
+    if inline_images:
+        lines.append("## Inline Images")
+        for img in inline_images:
+            field = img.get("source_field", "")
+            path = img.get("local_path", "")
+            label = f"{field} image" if field else "image"
+            lines.append(f"- {label}: {path}")
+        lines.append("")
 
     return "\n".join(lines)
 

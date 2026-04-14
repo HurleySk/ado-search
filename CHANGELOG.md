@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.8.0] — 2026-04-14
+
+### Added
+
+- **Attachments sync** — optionally download file attachments from work items and store them locally in `.ado-search/attachments/{id}/`. Enable with `include_attachments = true` in config. Attachment filenames are indexed in FTS5 and searchable.
+- **Inline image extraction** — images embedded in Description and Acceptance Criteria HTML fields are downloaded to `.ado-search/attachments/{id}/inline/` and referenced as `[image: path]` in stripped text output.
+- `ado-search show` now displays `## Attachments` and `## Inline Images` sections when present.
+- New auth helpers: `pat_download_binary()` and `build_download_command()` for streaming binary downloads via PAT, az-cli, or az-powershell.
+- Incremental attachment sync — existing files with correct size are skipped on re-sync.
+
+### Changed
+
+- When `include_attachments = true`, OData analytics fast path is skipped in favor of WIQL/REST (OData responses don't include relations where attachments live).
+
 ## [0.7.0] — 2026-04-14
 
 ### Added

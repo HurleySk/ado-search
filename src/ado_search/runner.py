@@ -148,6 +148,39 @@ async def fetch_and_parse(
             return f"Invalid JSON for {label}"
 
 
+async def download_binary(
+    auth_method: str,
+    *,
+    url: str,
+    dest_path: "Path",
+    org: str,
+    pat: str = "",
+    semaphore: asyncio.Semaphore | None = None,
+) -> str | None:
+    """Download a binary file. Returns None on success, error string on failure."""
+    from pathlib import Path as _Path
+    from contextlib import nullcontext as _nullcontext
+
+    dest = _Path(dest_path) if not isinstance(dest_path, _Path) else dest_path
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    async with semaphore if semaphore is not None else _nullcontext():
+        if auth_method == "pat":
+            from ado_search.auth import pat_download_binary
+            try:
+                await asyncio.to_thread(pat_download_binary, url=url, pat=pat, dest_path=dest)
+                return None
+            except Exception as e:
+                return f"Download failed for {url}: {e}"
+        else:
+            from ado_search.auth import build_download_command
+            cmd = build_download_command(url, dest, auth_method, org)
+            result = await run_command(cmd, timeout=300)
+            if result.returncode != 0:
+                return f"Download failed for {url}: {result.stderr}"
+            return None
+
+
 async def run_commands_parallel(
     cmds: list[list[str]],
     *,

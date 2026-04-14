@@ -60,3 +60,30 @@ def test_work_item_to_markdown_with_comments():
     assert "Jane Doe" in md
     assert "Reproduced on staging" in md
     assert "Bob Smith" in md
+
+
+def test_work_item_to_markdown_with_attachments():
+    with open(FIXTURE_DIR / "work_item_12345.json") as f:
+        raw = json.load(f)
+    attachments = [
+        {"name": "screenshot.png", "size": 45321, "guid": "abc", "local_path": "attachments/12345/screenshot.png"},
+        {"name": "doc.pdf", "size": 1048576, "guid": "def", "local_path": "attachments/12345/doc.pdf"},
+    ]
+    inline_images = [
+        {"guid": "ghi", "local_path": "attachments/12345/inline/ghi.png", "source_field": "description"},
+    ]
+    md = work_item_to_markdown(raw, attachments=attachments, inline_images=inline_images)
+    assert "## Attachments" in md
+    assert "screenshot.png" in md
+    assert "44.3 KB" in md
+    assert "doc.pdf" in md
+    assert "1.0 MB" in md
+    assert "## Inline Images" in md
+    assert "description image" in md
+    assert "attachments/12345/inline/ghi.png" in md
+
+
+def test_strip_html_preserves_rewritten_img():
+    html = '<p>See image:</p><img src="attachments/1/inline/abc.png" /><p>End</p>'
+    text = strip_html(html)
+    assert "[image: attachments/1/inline/abc.png]" in text

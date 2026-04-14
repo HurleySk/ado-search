@@ -86,6 +86,8 @@ async def _fetch_item(
     pat: str = "",
     semaphore: asyncio.Semaphore,
     include_comments: bool = False,
+    include_attachments: bool = False,
+    data_dir: Path | None = None,
 ) -> dict | str:
     """Fetch a single work item. Returns JSONL record dict or error string."""
     async with semaphore:
@@ -107,7 +109,53 @@ async def _fetch_item(
         if include_comments:
             comments = results[1]
 
-    record = prepare_work_item(raw, comments=comments)
+    # Attachment and inline image handling (before prepare_work_item strips HTML)
+    att_metadata: list[dict] = []
+    img_metadata: list[dict] = []
+    if include_attachments and data_dir is not None:
+        from ado_search.attachments import (
+            extract_attachments, extract_inline_images, rewrite_inline_images,
+            download_work_item_attachments, download_work_item_inline_images,
+        )
+
+        # Extract attachment metadata from relations
+        file_attachments = extract_attachments(raw)
+
+        # Extract inline images from raw HTML fields (before stripping)
+        fields = raw.get("fields", {})
+        desc_html = fields.get("System.Description", "") or ""
+        ac_html = fields.get("Microsoft.VSTS.Common.AcceptanceCriteria", "") or ""
+        desc_images = extract_inline_images(desc_html)
+        ac_images = extract_inline_images(ac_html)
+
+        # Download attachments and inline images
+        att_metadata = await download_work_item_attachments(
+            item_id, file_attachments,
+            data_dir=data_dir, auth_method=auth_method, org=org, pat=pat,
+            semaphore=semaphore,
+        )
+        desc_map, desc_img_meta = await download_work_item_inline_images(
+            item_id, desc_images,
+            data_dir=data_dir, auth_method=auth_method, org=org, pat=pat,
+            semaphore=semaphore, source_field="description",
+        )
+        ac_map, ac_img_meta = await download_work_item_inline_images(
+            item_id, ac_images,
+            data_dir=data_dir, auth_method=auth_method, org=org, pat=pat,
+            semaphore=semaphore, source_field="acceptance_criteria",
+        )
+        img_metadata = desc_img_meta + ac_img_meta
+
+        # Rewrite inline image URLs in raw HTML before prepare_work_item strips it
+        if desc_map:
+            fields["System.Description"] = rewrite_inline_images(desc_html, desc_map)
+        if ac_map:
+            fields["Microsoft.VSTS.Common.AcceptanceCriteria"] = rewrite_inline_images(ac_html, ac_map)
+
+    record = prepare_work_item(
+        raw, comments=comments,
+        attachments=att_metadata, inline_images=img_metadata,
+    )
     record["state_history"] = extract_state_history(updates)
     return record
 
@@ -253,6 +301,7 @@ async def fetch_specific_work_items(
     data_dir: Path,
     max_concurrent: int = 5,
     dry_run: bool = False,
+    include_attachments: bool = False,
 ) -> SyncResult:
     """Fetch specific work items by ID and merge them into the local store."""
     if dry_run:
@@ -268,6 +317,8 @@ async def fetch_specific_work_items(
             project=project,
             pat=pat,
             semaphore=semaphore,
+            include_attachments=include_attachments,
+            data_dir=data_dir,
         )
         for item_id in item_ids
     ]
@@ -300,23 +351,27 @@ async def sync_work_items(
     last_sync: str,
     max_concurrent: int = 5,
     include_comments: bool = False,
+    include_attachments: bool = False,
     dry_run: bool = False,
 ) -> SyncResult:
-    # Try OData analytics fast path
-    from ado_search.sync_odata import sync_via_odata
+    # OData doesn't include relations (attachments), so skip when attachments enabled
+    if not include_attachments:
+        from ado_search.sync_odata import sync_via_odata
 
-    click.echo("  Trying OData analytics (fast path)...")
-    odata_result = await sync_via_odata(
-        org=org, project=project, auth_method=auth_method, pat=pat,
-        data_dir=data_dir,
-        work_item_types=work_item_types, area_paths=area_paths,
-        states=states, last_sync=last_sync, dry_run=dry_run,
-    )
+        click.echo("  Trying OData analytics (fast path)...")
+        odata_result = await sync_via_odata(
+            org=org, project=project, auth_method=auth_method, pat=pat,
+            data_dir=data_dir,
+            work_item_types=work_item_types, area_paths=area_paths,
+            states=states, last_sync=last_sync, dry_run=dry_run,
+        )
 
-    if odata_result is not None:
-        return odata_result
+        if odata_result is not None:
+            return odata_result
 
-    click.echo("  OData not available, using WIQL fallback...")
+        click.echo("  OData not available, using WIQL fallback...")
+    else:
+        click.echo("  Attachments enabled, using WIQL (REST) path...")
 
     item_ids = await _discover_work_item_ids(
         auth_method=auth_method,
@@ -345,6 +400,8 @@ async def sync_work_items(
             pat=pat,
             semaphore=semaphore,
             include_comments=include_comments,
+            include_attachments=include_attachments,
+            data_dir=data_dir,
         )
         for item_id in item_ids
     ]

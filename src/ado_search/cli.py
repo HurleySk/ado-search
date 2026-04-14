@@ -118,6 +118,7 @@ def sync(data_dir: str | None, dry_run: bool):
             last_sync=sync_cfg.get("last_sync", ""),
             max_concurrent=sync_cfg.get("performance", {}).get("max_concurrent", 5),
             include_comments=sync_cfg.get("include_comments", False),
+            include_attachments=sync_cfg.get("include_attachments", False),
             dry_run=dry_run,
         ))
         click.echo(f"  Work items: {wi_stats['fetched']} synced, {wi_stats['errors']} errors")
@@ -218,19 +219,29 @@ def show(item_id: str, data_dir: str | None):
                 meta["description_snippet"] = make_snippet(meta["description_full"])
                 # Load comments from JSONL (not stored in DB)
                 comments = None
+                attachments = None
+                inline_images = None
                 from ado_search.jsonl import read_jsonl_item
                 wi_jsonl = data_path / "work-items.jsonl"
                 if wi_jsonl.exists():
                     jsonl_item = read_jsonl_item(wi_jsonl, key="id", value=wi_id)
-                    if jsonl_item and jsonl_item.get("comments"):
-                        # Map from JSONL format to raw ADO format expected by markdown
-                        comments = [
-                            {"createdBy": {"displayName": c["author"]},
-                             "createdDate": c["date"],
-                             "text": c["text"]}
-                            for c in jsonl_item["comments"]
-                        ]
-                md = work_item_to_markdown({}, meta=meta, comments=comments)
+                    if jsonl_item:
+                        if jsonl_item.get("comments"):
+                            # Map from JSONL format to raw ADO format expected by markdown
+                            comments = [
+                                {"createdBy": {"displayName": c["author"]},
+                                 "createdDate": c["date"],
+                                 "text": c["text"]}
+                                for c in jsonl_item["comments"]
+                            ]
+                        if jsonl_item.get("attachments"):
+                            attachments = jsonl_item["attachments"]
+                        if jsonl_item.get("inline_images"):
+                            inline_images = jsonl_item["inline_images"]
+                md = work_item_to_markdown(
+                    {}, meta=meta, comments=comments,
+                    attachments=attachments, inline_images=inline_images,
+                )
                 click.echo(md)
                 return
         except ValueError:
@@ -291,6 +302,7 @@ def fetch(ids: tuple[int, ...], data_dir: str | None, dry_run: bool):
             data_dir=data_path,
             max_concurrent=cfg["sync"].get("performance", {}).get("max_concurrent", 5),
             dry_run=dry_run,
+            include_attachments=cfg["sync"].get("include_attachments", False),
         ))
 
         if not dry_run:

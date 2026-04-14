@@ -24,6 +24,7 @@ def default_config() -> dict:
             "states": [],
             "wiki_names": [],
             "include_comments": False,
+            "include_attachments": False,
             "last_sync": "",
             "performance": {
                 "max_concurrent": 5,

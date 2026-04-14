@@ -1,4 +1,6 @@
-from ado_search.auth import build_az_cli_command, build_powershell_command
+from pathlib import Path
+
+from ado_search.auth import build_az_cli_command, build_download_command, build_powershell_command
 
 
 def test_build_az_cli_command_wiql():
@@ -100,3 +102,30 @@ def test_build_az_cli_command_wiki_page_show():
     param_str = " ".join(params)
     assert "Getting-Started" in param_str
     assert "includeContent=true" in param_str
+
+
+def test_build_download_command_az_cli():
+    cmd = build_download_command(
+        "https://dev.azure.com/contoso/_apis/wit/attachments/abc-123",
+        Path("/tmp/file.png"),
+        "az-cli",
+        "https://dev.azure.com/contoso",
+    )
+    assert cmd[0] == "az"
+    assert "rest" in cmd
+    assert "--output-file" in cmd
+    assert "--url" in cmd
+
+
+def test_build_download_command_powershell():
+    cmd = build_download_command(
+        "https://dev.azure.com/contoso/_apis/wit/attachments/abc-123",
+        Path("/tmp/file.png"),
+        "az-powershell",
+        "https://dev.azure.com/contoso",
+    )
+    assert cmd[0] == "pwsh"
+    ps_script = cmd[cmd.index("-Command") + 1]
+    assert "Invoke-WebRequest" in ps_script
+    assert "-OutFile" in ps_script
+    assert "Get-AzAccessToken" in ps_script

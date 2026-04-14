@@ -49,9 +49,20 @@ The SQLite index (`index.db`) is `.gitignore`d — it auto-rebuilds from JSONL o
 
 ## Synced Fields
 
-Each work item includes: id, title, type, state, area, iteration, assigned_to, tags, priority, parent_id, created, updated, description, acceptance_criteria, story_points, and state_history (state transitions with timestamps).
+Each work item includes: id, title, type, state, area, iteration, assigned_to, tags, priority, parent_id, created, updated, description, acceptance_criteria, story_points, state_history, attachments, and inline_images.
 
 Story points are sourced from `StoryPoints` or `Effort` fields. State history tracks every state change (e.g., New → Active → Resolved → Closed) with date and author.
+
+### Attachments & Inline Images
+
+When `include_attachments = true`, sync downloads:
+
+- **File attachments** — stored in `.ado-search/attachments/{work_item_id}/`
+- **Inline images** — images embedded in Description/Acceptance Criteria HTML, stored in `.ado-search/attachments/{work_item_id}/inline/`
+
+Attachment filenames are indexed and searchable. Inline images are referenced as `[image: path]` in text output so agents can locate them. Downloads are incremental — existing files with correct size are skipped on re-sync.
+
+Note: attachments require the WIQL/REST sync path (OData doesn't include relations), so OData fast path is skipped when attachments are enabled.
 
 ## Commands
 
@@ -71,6 +82,7 @@ Default sync includes Bug, User Story, Epic, and Feature work item types. To inc
 [sync]
 work_item_types = ["Bug", "User Story", "Task", "Epic", "Feature"]
 include_comments = false
+include_attachments = false  # set to true to download file attachments and inline images
 ```
 
 ## Auth Methods

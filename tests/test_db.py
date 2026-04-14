@@ -362,3 +362,34 @@ def test_reindex_from_jsonl(tmp_path):
     wiki_results = db.search_wiki("Page")
     assert len(wiki_results) == 1
     db.close()
+
+
+def test_reindex_includes_attachment_filenames_in_search(tmp_path):
+    import json
+    db = Database(tmp_path / "index.db")
+    db.initialize()
+    wi_path = tmp_path / "work-items.jsonl"
+    wiki_path = tmp_path / "wiki-pages.jsonl"
+    wi_path.write_text(
+        json.dumps({
+            "id": 1, "title": "Bug report", "type": "Bug", "state": "Active",
+            "area": "A", "iteration": "I", "assigned_to": "", "tags": "",
+            "priority": 1, "parent_id": None, "created": "2025-01-01",
+            "updated": "2025-01-02", "description": "some bug",
+            "acceptance_criteria": "",
+            "attachments": [
+                {"name": "screenshot.png", "size": 1000, "guid": "g1", "local_path": "attachments/1/screenshot.png"},
+                {"name": "repro-steps.docx", "size": 2000, "guid": "g2", "local_path": "attachments/1/repro-steps.docx"},
+            ],
+        }) + "\n",
+        encoding="utf-8",
+    )
+    wiki_path.write_text("", encoding="utf-8")
+    db.reindex_from_jsonl(wi_path, wiki_path)
+    # Searching by attachment filename should find the work item
+    results = db.search_work_items("screenshot.png")
+    assert len(results) == 1
+    assert results[0]["id"] == 1
+    results = db.search_work_items("repro-steps.docx")
+    assert len(results) == 1
+    db.close()

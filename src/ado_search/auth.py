@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable
 from urllib.parse import quote
 
@@ -15,6 +16,7 @@ OP_WIKI_PAGE_SHOW = "wiki-page-show"
 OP_COMMENTS = "comments"
 OP_UPDATES = "updates"
 OP_ODATA_QUERY = "odata-query"
+OP_ATTACHMENT = "attachment"
 
 
 @dataclass
@@ -125,6 +127,9 @@ OPERATIONS: dict[str, OperationDef] = {
         az_cli_include_project=False,
     ),
     OP_ODATA_QUERY: OperationDef(
+        raw_url=True,
+    ),
+    OP_ATTACHMENT: OperationDef(
         raw_url=True,
     ),
 }
@@ -289,3 +294,45 @@ def pat_request(
             return json.loads(resp.read().decode("utf-8"))
     except HTTPError as e:
         raise RuntimeError(f"HTTP {e.code} for {operation}: {e.read().decode('utf-8', errors='replace')[:500]}")
+
+
+def pat_download_binary(*, url: str, pat: str, dest_path: Path) -> None:
+    """Download a binary file using PAT auth, streaming to disk."""
+    import base64
+    import shutil
+    from urllib.request import Request, urlopen
+    from urllib.error import HTTPError
+
+    creds = base64.b64encode(f":{pat}".encode()).decode()
+    headers = {"Authorization": f"Basic {creds}"}
+    req = Request(url, headers=headers, method="GET")
+    try:
+        with urlopen(req, timeout=120) as resp:
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(dest_path, "wb") as f:
+                shutil.copyfileobj(resp, f)
+    except HTTPError as e:
+        raise RuntimeError(f"HTTP {e.code} downloading {url}: {e.read().decode('utf-8', errors='replace')[:500]}")
+
+
+def build_download_command(
+    url: str, dest_path: Path, auth_method: str, org: str,
+) -> list[str]:
+    """Build a shell command to download a binary file."""
+    if auth_method == "az-cli":
+        return [
+            "az", "rest", "--method", "get",
+            "--resource", ADO_RESOURCE_ID,
+            "--url", url,
+            "--output-file", str(dest_path),
+        ]
+    # az-powershell
+    token_expr = f"(Get-AzAccessToken -ResourceUrl '{ADO_RESOURCE_ID}').Token"
+    safe_url = _escape_ps(url)
+    safe_dest = str(dest_path).replace("'", "''")
+    script = (
+        f"$token = {token_expr}; "
+        f"$headers = @{{Authorization = \"Bearer $token\"}}; "
+        f"Invoke-WebRequest -Uri '{safe_url}' -Headers $headers -OutFile '{safe_dest}'"
+    )
+    return ["pwsh", "-NoProfile", "-Command", script]

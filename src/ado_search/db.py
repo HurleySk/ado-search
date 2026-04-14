@@ -320,7 +320,13 @@ class Database:
         try:
             with self.batch():
                 for item in iter_jsonl(work_items_path):
-                    item.setdefault("description_snippet", make_snippet(item.get("description", "")))
+                    snippet = make_snippet(item.get("description", ""))
+                    att_names = " ".join(
+                        a["name"] for a in item.get("attachments", []) if a.get("name")
+                    )
+                    if att_names:
+                        snippet = f"{snippet} [attachments: {att_names}]"
+                    item.setdefault("description_snippet", snippet)
                     self.upsert_work_item(item)
                     if item.get("state_history"):
                         self.upsert_state_changes(item["id"], item["state_history"])

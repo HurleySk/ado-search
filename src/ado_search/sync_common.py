@@ -15,6 +15,8 @@ def prepare_work_item(
     raw: dict,
     *,
     comments: list[dict] | None = None,
+    attachments: list[dict] | None = None,
+    inline_images: list[dict] | None = None,
 ) -> dict:
     """Extract metadata from a raw ADO work item into a flat JSONL-ready dict."""
     meta = extract_work_item_metadata(raw)
@@ -46,6 +48,8 @@ def prepare_work_item(
         ]
     else:
         record["comments"] = []
+    record["attachments"] = attachments or []
+    record["inline_images"] = inline_images or []
     return record
 
 

@@ -80,6 +80,15 @@ class Database:
                 description_snippet,
                 tags
             );
+
+            CREATE TABLE IF NOT EXISTS work_item_state_changes (
+                item_id INTEGER NOT NULL,
+                from_state TEXT NOT NULL,
+                to_state TEXT NOT NULL,
+                changed_date TEXT NOT NULL,
+                changed_by TEXT,
+                PRIMARY KEY (item_id, changed_date, to_state)
+            );
         """)
         for col, col_type, default in [
             ("description", "TEXT", "''"),
@@ -312,6 +321,39 @@ class Database:
                     self.upsert_wiki_page(page)
         finally:
             self._skip_fts_delete = False
+
+    def upsert_state_changes(self, item_id: int, changes: list[dict]) -> None:
+        conn = self._connect()
+        conn.execute("DELETE FROM work_item_state_changes WHERE item_id = ?", (item_id,))
+        for c in changes:
+            conn.execute(
+                """INSERT INTO work_item_state_changes
+                   (item_id, from_state, to_state, changed_date, changed_by)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (item_id, c["from"], c["to"], c["date"], c.get("by", "")),
+            )
+        if not self._in_batch:
+            conn.commit()
+
+    def get_state_changes(self, item_id: int) -> list[dict]:
+        conn = self._connect()
+        rows = conn.execute(
+            """SELECT item_id, from_state, to_state, changed_date, changed_by
+               FROM work_item_state_changes
+               WHERE item_id = ?
+               ORDER BY changed_date""",
+            (item_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_all_state_changes(self) -> list[dict]:
+        conn = self._connect()
+        rows = conn.execute(
+            """SELECT item_id, from_state, to_state, changed_date, changed_by
+               FROM work_item_state_changes
+               ORDER BY item_id, changed_date"""
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def close(self) -> None:
         if self._conn:

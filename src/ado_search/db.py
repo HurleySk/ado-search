@@ -174,6 +174,7 @@ class Database:
             "DELETE FROM search_index WHERE item_type = 'work_item' AND item_id = ?",
             (str(item_id),),
         )
+        conn.execute("DELETE FROM work_item_state_changes WHERE item_id = ?", (item_id,))
         if not self._in_batch:
             conn.commit()
 
@@ -189,6 +190,10 @@ class Database:
             conn.execute(
                 f"DELETE FROM search_index WHERE item_type = 'work_item' AND item_id IN ({placeholders})",
                 str_chunk,
+            )
+            conn.execute(
+                f"DELETE FROM work_item_state_changes WHERE item_id IN ({placeholders})",
+                chunk,
             )
         if not self._in_batch:
             conn.commit()

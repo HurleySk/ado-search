@@ -56,6 +56,7 @@ def extract_work_item_metadata(raw: dict) -> dict:
     created_raw = fields.get("System.CreatedDate", "")
     updated_raw = fields.get("System.ChangedDate", "")
 
+    sp = fields.get("Microsoft.VSTS.Scheduling.StoryPoints")
     return {
         "id": raw["id"],
         "title": fields.get("System.Title", ""),
@@ -66,8 +67,7 @@ def extract_work_item_metadata(raw: dict) -> dict:
         "assigned_to": assigned_to,
         "tags": tags,
         "priority": fields.get("Microsoft.VSTS.Common.Priority"),
-        "story_points": fields.get("Microsoft.VSTS.Scheduling.StoryPoints")
-                        or fields.get("Microsoft.VSTS.Scheduling.Effort"),
+        "story_points": sp if sp is not None else fields.get("Microsoft.VSTS.Scheduling.Effort"),
         "parent_id": fields.get("System.Parent"),
         "created": created_raw[:10] if created_raw else "",
         "updated": updated_raw[:10] if updated_raw else "",

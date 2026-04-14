@@ -60,6 +60,23 @@ def test_get_all_state_changes(tmp_path):
     db.close()
 
 
+def test_delete_work_item_cleans_state_changes(tmp_path):
+    db = Database(tmp_path / "index.db")
+    db.initialize()
+    db.upsert_work_item({
+        "id": 1, "title": "Test", "type": "Bug", "state": "Active",
+        "area": "", "iteration": "", "assigned_to": "", "tags": "",
+        "priority": 1, "parent_id": None, "created": "2026-01-01",
+        "updated": "2026-01-02", "description_snippet": "test", "story_points": None,
+    })
+    db.upsert_state_changes(1, [
+        {"from": "New", "to": "Active", "date": "2026-01-15", "by": "a@co.com"},
+    ])
+    db.delete_work_item(1)
+    assert db.get_state_changes(1) == []
+    db.close()
+
+
 def test_reindex_loads_state_history(tmp_path):
     db = Database(tmp_path / "index.db")
     db.initialize()

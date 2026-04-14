@@ -97,12 +97,15 @@ async def _fetch_item(
             return raw
 
     comments = []
-    if include_comments:
-        async with semaphore:
-            comments = await _fetch_comments(item_id, auth_method, org, project, pat=pat)
-
+    updates = []
     async with semaphore:
-        updates = await _fetch_updates(item_id, auth_method, org, project, pat=pat)
+        coros = [_fetch_updates(item_id, auth_method, org, project, pat=pat)]
+        if include_comments:
+            coros.append(_fetch_comments(item_id, auth_method, org, project, pat=pat))
+        results = await asyncio.gather(*coros)
+        updates = results[0]
+        if include_comments:
+            comments = results[1]
 
     record = prepare_work_item(raw, comments=comments)
     record["state_history"] = extract_state_history(updates)

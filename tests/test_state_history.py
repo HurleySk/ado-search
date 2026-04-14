@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 from ado_search.db import Database
 
 
@@ -54,4 +57,34 @@ def test_get_all_state_changes(tmp_path):
     assert len(all_changes) == 2
     item_ids = {c["item_id"] for c in all_changes}
     assert item_ids == {1, 2}
+    db.close()
+
+
+def test_reindex_loads_state_history(tmp_path):
+    db = Database(tmp_path / "index.db")
+    db.initialize()
+
+    wi_path = tmp_path / "work-items.jsonl"
+    wiki_path = tmp_path / "wiki-pages.jsonl"
+    wiki_path.write_text("", encoding="utf-8")
+
+    wi_data = {
+        "id": 1, "title": "Test", "type": "Bug", "state": "Resolved",
+        "area": "A", "iteration": "I", "assigned_to": "", "tags": "",
+        "priority": 1, "parent_id": None, "created": "2026-01-01",
+        "updated": "2026-02-03", "description": "", "acceptance_criteria": "",
+        "story_points": 3.0,
+        "state_history": [
+            {"from": "New", "to": "Active", "date": "2026-01-15", "by": "a@co.com"},
+            {"from": "Active", "to": "Resolved", "date": "2026-02-03", "by": "a@co.com"},
+        ],
+    }
+    wi_path.write_text(json.dumps(wi_data) + "\n", encoding="utf-8")
+
+    db.reindex_from_jsonl(wi_path, wiki_path)
+
+    changes = db.get_state_changes(1)
+    assert len(changes) == 2
+    assert changes[0]["from_state"] == "New"
+    assert changes[1]["to_state"] == "Resolved"
     db.close()

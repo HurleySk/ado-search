@@ -308,6 +308,7 @@ class Database:
         conn.execute("DELETE FROM work_items")
         conn.execute("DELETE FROM wiki_pages")
         conn.execute("DELETE FROM search_index")
+        conn.execute("DELETE FROM work_item_state_changes")
         conn.commit()
 
         self._skip_fts_delete = True
@@ -316,6 +317,8 @@ class Database:
                 for item in iter_jsonl(work_items_path):
                     item.setdefault("description_snippet", make_snippet(item.get("description", "")))
                     self.upsert_work_item(item)
+                    if item.get("state_history"):
+                        self.upsert_state_changes(item["id"], item["state_history"])
                 for page in iter_jsonl(wiki_pages_path):
                     page.setdefault("description_snippet", make_snippet(page.get("content", "")))
                     self.upsert_wiki_page(page)

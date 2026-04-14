@@ -13,6 +13,7 @@ OP_WIKI_LIST = "wiki-list"
 OP_WIKI_PAGE_LIST = "wiki-page-list"
 OP_WIKI_PAGE_SHOW = "wiki-page-show"
 OP_COMMENTS = "comments"
+OP_UPDATES = "updates"
 OP_ODATA_QUERY = "odata-query"
 
 
@@ -106,6 +107,10 @@ OPERATIONS: dict[str, OperationDef] = {
         path="{url_project}/_apis/wiki/wikis/{url_wiki}/pages",
         query_params=["path={path}", "includeContent=true", "api-version=7.1"],
         az_rest_url_parameters=True,
+    ),
+    OP_UPDATES: OperationDef(
+        path="{url_project}/_apis/wit/workitems/{work_item_id}/updates",
+        query_params=["api-version=7.1"],
     ),
     OP_COMMENTS: OperationDef(
         path="{url_project}/_apis/wit/workitems/{work_item_id}/comments",

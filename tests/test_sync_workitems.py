@@ -6,6 +6,7 @@ from unittest.mock import patch
 from ado_search.db import Database
 from ado_search.jsonl import read_jsonl, write_jsonl
 from ado_search.runner import CommandResult
+from ado_search.sync_common import extract_state_history
 from ado_search.sync_workitems import sync_work_items, build_wiql_query
 
 
@@ -126,6 +127,52 @@ def test_sync_work_items_writes_jsonl_and_indexes(tmp_path):
     assert len(results) >= 1
 
     db.close()
+
+
+def test_extract_state_history_from_updates():
+    updates = [
+        {
+            "id": 1,
+            "fields": {
+                "System.State": {"oldValue": "New", "newValue": "Active"},
+                "System.ChangedDate": {"newValue": "2026-01-15T10:00:00Z"},
+                "System.ChangedBy": {"newValue": {"uniqueName": "alice@co.com"}},
+            },
+        },
+        {
+            "id": 2,
+            "fields": {
+                "System.Title": {"oldValue": "Old", "newValue": "New Title"},
+            },
+        },
+        {
+            "id": 3,
+            "fields": {
+                "System.State": {"oldValue": "Active", "newValue": "Resolved"},
+                "System.ChangedDate": {"newValue": "2026-02-03T14:30:00Z"},
+                "System.ChangedBy": {"newValue": {"uniqueName": "alice@co.com"}},
+            },
+        },
+    ]
+    history = extract_state_history(updates)
+    assert len(history) == 2
+    assert history[0] == {
+        "from": "New", "to": "Active",
+        "date": "2026-01-15", "by": "alice@co.com",
+    }
+    assert history[1] == {
+        "from": "Active", "to": "Resolved",
+        "date": "2026-02-03", "by": "alice@co.com",
+    }
+
+
+def test_extract_state_history_empty():
+    assert extract_state_history([]) == []
+
+
+def test_extract_state_history_no_state_changes():
+    updates = [{"id": 1, "fields": {"System.Title": {"oldValue": "A", "newValue": "B"}}}]
+    assert extract_state_history(updates) == []
 
 
 def test_deletion_detection_via_jsonl(tmp_path):

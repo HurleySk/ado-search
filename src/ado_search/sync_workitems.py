@@ -6,9 +6,9 @@ from pathlib import Path
 
 import click
 
-from ado_search.auth import OP_COMMENTS, OP_QUERY, OP_SHOW
+from ado_search.auth import OP_COMMENTS, OP_QUERY, OP_SHOW, OP_UPDATES
 from ado_search.runner import SyncResult, fetch_and_parse, run_operation
-from ado_search.sync_common import finalize_jsonl, prepare_work_item, split_results
+from ado_search.sync_common import extract_state_history, finalize_jsonl, prepare_work_item, split_results
 
 
 WIQL_PAGE_SIZE = 20000
@@ -53,6 +53,18 @@ def build_wiql_query(
     return f"SELECT [System.Id] FROM WorkItems WHERE {where} ORDER BY [System.Id] ASC"
 
 
+async def _fetch_updates(
+    work_item_id: int, auth_method: str, org: str, project: str, pat: str = "",
+) -> list[dict]:
+    data = await fetch_and_parse(
+        auth_method, OP_UPDATES, f"updates for #{work_item_id}",
+        org=org, project=project, pat=pat, work_item_id=work_item_id,
+    )
+    if isinstance(data, str):
+        return []
+    return data.get("value", [])
+
+
 async def _fetch_comments(
     work_item_id: int, auth_method: str, org: str, project: str, pat: str = "",
 ) -> list[dict]:
@@ -89,7 +101,12 @@ async def _fetch_item(
         async with semaphore:
             comments = await _fetch_comments(item_id, auth_method, org, project, pat=pat)
 
-    return prepare_work_item(raw, comments=comments)
+    async with semaphore:
+        updates = await _fetch_updates(item_id, auth_method, org, project, pat=pat)
+
+    record = prepare_work_item(raw, comments=comments)
+    record["state_history"] = extract_state_history(updates)
+    return record
 
 
 ID_CHUNK_SIZE = 10000  # query in chunks of 10K IDs to stay under the 20K result limit

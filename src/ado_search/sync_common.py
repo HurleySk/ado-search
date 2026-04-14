@@ -49,6 +49,36 @@ def prepare_work_item(
     return record
 
 
+def extract_state_history(updates: list[dict]) -> list[dict]:
+    """Extract state transitions from work item update records."""
+    history = []
+    for update in updates:
+        fields = update.get("fields", {})
+        state_change = fields.get("System.State")
+        if not state_change or "oldValue" not in state_change:
+            continue
+
+        changed_date_field = fields.get("System.ChangedDate", {})
+        changed_date = (changed_date_field.get("newValue", "") or "")[:10]
+
+        changed_by_field = fields.get("System.ChangedBy", {})
+        changed_by_val = changed_by_field.get("newValue", "")
+        if isinstance(changed_by_val, dict):
+            changed_by = changed_by_val.get("uniqueName", changed_by_val.get("displayName", ""))
+        elif isinstance(changed_by_val, str):
+            changed_by = changed_by_val
+        else:
+            changed_by = ""
+
+        history.append({
+            "from": state_change["oldValue"],
+            "to": state_change["newValue"],
+            "date": changed_date,
+            "by": changed_by,
+        })
+    return history
+
+
 def split_results(
     results: list,
     *,

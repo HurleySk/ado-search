@@ -47,6 +47,12 @@ Sync produces two text files that are safe to commit, push, and pull:
 
 The SQLite index (`index.db`) is `.gitignore`d — it auto-rebuilds from JSONL on first search or show.
 
+## Synced Fields
+
+Each work item includes: id, title, type, state, area, iteration, assigned_to, tags, priority, parent_id, created, updated, description, acceptance_criteria, story_points, and state_history (state transitions with timestamps).
+
+Story points are sourced from `StoryPoints` or `Effort` fields. State history tracks every state change (e.g., New → Active → Resolved → Closed) with date and author.
+
 ## Commands
 
 | Command | Description |

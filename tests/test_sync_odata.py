@@ -261,6 +261,36 @@ def test_sync_via_odata_pagination(tmp_path):
     db.close()
 
 
+def test_odata_to_ado_format_includes_story_points():
+    odata_item = {
+        "WorkItemId": 100, "Title": "Test", "WorkItemType": "User Story",
+        "State": "Active", "Priority": 2, "TagNames": "",
+        "CreatedDate": "2026-01-01", "ChangedDate": "2026-01-02",
+        "Description": "", "Microsoft_VSTS_Common_AcceptanceCriteria": "",
+        "ParentWorkItemId": None, "StoryPoints": 8.0,
+        "Area": {"AreaPath": "Proj\\Team"},
+        "Iteration": {"IterationPath": "Proj\\Sprint 1"},
+        "AssignedTo": {"UniqueName": "u@e.com"},
+    }
+    result = odata_to_ado_format(odata_item)
+    assert result["fields"]["Microsoft.VSTS.Scheduling.StoryPoints"] == 8.0
+
+
+def test_odata_to_ado_format_null_story_points():
+    odata_item = {
+        "WorkItemId": 101, "Title": "Bug", "WorkItemType": "Bug",
+        "State": "New", "Priority": 1, "TagNames": "",
+        "CreatedDate": "2026-01-01", "ChangedDate": "2026-01-02",
+        "Description": "", "Microsoft_VSTS_Common_AcceptanceCriteria": "",
+        "ParentWorkItemId": None,
+        "Area": {"AreaPath": "Proj"},
+        "Iteration": {"IterationPath": "Proj\\Sprint 1"},
+        "AssignedTo": None,
+    }
+    result = odata_to_ado_format(odata_item)
+    assert result["fields"].get("Microsoft.VSTS.Scheduling.StoryPoints") is None
+
+
 def test_sync_via_odata_dry_run(tmp_path):
     data_dir = tmp_path / ".ado-search"
     (data_dir / "work-items").mkdir(parents=True)

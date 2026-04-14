@@ -28,6 +28,7 @@ def prepare_work_item(
         "assigned_to": meta["assigned_to"],
         "tags": meta["tags"],
         "priority": meta["priority"],
+        "story_points": meta.get("story_points"),
         "parent_id": meta["parent_id"],
         "created": meta["created"],
         "updated": meta["updated"],

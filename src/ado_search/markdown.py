@@ -66,6 +66,8 @@ def extract_work_item_metadata(raw: dict) -> dict:
         "assigned_to": assigned_to,
         "tags": tags,
         "priority": fields.get("Microsoft.VSTS.Common.Priority"),
+        "story_points": fields.get("Microsoft.VSTS.Scheduling.StoryPoints")
+                        or fields.get("Microsoft.VSTS.Scheduling.Effort"),
         "parent_id": fields.get("System.Parent"),
         "created": created_raw[:10] if created_raw else "",
         "updated": updated_raw[:10] if updated_raw else "",

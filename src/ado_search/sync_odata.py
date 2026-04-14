@@ -18,7 +18,7 @@ ODATA_SELECT = ",".join([
     "WorkItemId", "Title", "WorkItemType", "State", "Priority",
     "TagNames", "CreatedDate", "ChangedDate",
     "Description", "Microsoft_VSTS_Common_AcceptanceCriteria",
-    "ParentWorkItemId",
+    "ParentWorkItemId", "StoryPoints",
 ])
 
 ODATA_EXPAND = ",".join([
@@ -110,6 +110,7 @@ def odata_to_ado_format(odata_item: dict) -> dict:
             "System.ChangedDate": odata_item.get("ChangedDate", ""),
             "System.Description": odata_item.get("Description", "") or "",
             "Microsoft.VSTS.Common.AcceptanceCriteria": odata_item.get("Microsoft_VSTS_Common_AcceptanceCriteria", "") or "",
+            "Microsoft.VSTS.Scheduling.StoryPoints": odata_item.get("StoryPoints"),
         },
     }
 

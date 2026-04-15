@@ -77,7 +77,7 @@ async def _fetch_comments(
     return data.get("comments", [])
 
 
-async def _fetch_item(
+async def fetch_item(
     item_id: int,
     *,
     auth_method: str,
@@ -310,7 +310,7 @@ async def fetch_specific_work_items(
 
     semaphore = asyncio.Semaphore(max_concurrent)
     tasks = [
-        _fetch_item(
+        fetch_item(
             item_id,
             auth_method=auth_method,
             org=org,
@@ -392,7 +392,7 @@ async def sync_work_items(
 
     semaphore = asyncio.Semaphore(max_concurrent)
     tasks = [
-        _fetch_item(
+        fetch_item(
             item_id,
             auth_method=auth_method,
             org=org,

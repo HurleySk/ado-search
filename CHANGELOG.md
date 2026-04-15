@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.10.0] — 2026-04-15
+
+### Added
+
+- **`@file` input for HTML fields** — `--description @desc.html` and `--acceptance-criteria @criteria.html` now read content from a file. Works on both `create` and `update` commands. Use `@@literal` to pass a string that starts with `@`.
+- **`ado-search add-comment`** — new command to post a comment on a work item. Accepts inline HTML text or `@file.html`. Supports `--dry-run`. After posting, the work item is re-fetched so the comment appears in local search immediately.
+
+## [0.9.0] — 2026-04-14
+
+### Added
+
+- **`ado-search create`** — create new work items directly from the CLI. Supports `--type`, `--title`, `--state`, `--description`, `--assigned-to`, `--tags`, `--priority`, `--story-points`, and more. Works with all three auth methods (az-cli, az-powershell, PAT).
+- **`ado-search update`** — update existing work items by ID. All fields are optional; at least one must be provided. Supports the same field options as `create`.
+- **`--field Key=Value`** repeatable option on both commands for setting arbitrary ADO fields (including custom fields) beyond the named options.
+- **`--dry-run`** on both commands to preview changes without writing to ADO.
+- New module `write_workitems.py` with `FIELD_MAP`, `build_json_patch()`, `resolve_fields()`, and async create/update functions.
+- Generalized body handling in `auth.py` — `pat_request()` and `build_powershell_command()` now accept `body` and `content_type` parameters, enabling `application/json-patch+json` for work item mutations.
+
+### Changed
+
+- `_fetch_item()` in `sync_workitems.py` renamed to `fetch_item()` (public API) so it can be reused by the write pipeline for post-mutation re-fetch.
+
 ## [0.8.0] — 2026-04-14
 
 ### Added

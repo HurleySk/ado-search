@@ -72,6 +72,56 @@ Note: attachments require the WIQL/REST sync path (OData doesn't include relatio
 | `ado-search sync` | Pull latest data from Azure DevOps |
 | `ado-search search "query"` | Full-text search with filters |
 | `ado-search show <id>` | Display full content of an item |
+| `ado-search create` | Create a new work item |
+| `ado-search update <id>` | Update an existing work item |
+| `ado-search add-comment <id> <text>` | Add a comment to a work item |
+
+## Create & Update
+
+Create and update work items directly from the CLI:
+
+```bash
+# Create a new bug
+ado-search create --type Bug --title "Login button broken" --state New --priority 1
+
+# Create with description and tags
+ado-search create --type "User Story" --title "Add dark mode" \
+  --description "Users want a dark theme option" \
+  --tags "ui; theme" --story-points 5
+
+# Update a work item
+ado-search update 12345 --state Active --assigned-to "user@example.com"
+
+# Set arbitrary ADO fields (including custom fields)
+ado-search create --type Task --title "Research" --field "Custom.Effort=3"
+ado-search update 12345 --field "System.AreaPath=Project\Team" --field "Custom.Sprint=Sprint 5"
+
+# Preview without writing
+ado-search create --type Bug --title "Test" --dry-run
+```
+
+### HTML Content from Files
+
+Description, acceptance criteria, and comment text accept HTML. For multi-line content, use the `@file` convention to read from a file:
+
+```bash
+# Set description from an HTML file
+ado-search create --type Bug --title "Rendering issue" --description @bug-details.html
+
+# Update acceptance criteria from a file
+ado-search update 12345 --acceptance-criteria @criteria.html
+
+# Add a comment from a file
+ado-search add-comment 12345 @review-notes.html
+
+# Inline HTML still works
+ado-search add-comment 12345 "<p>Looks good!</p>"
+
+# Escape a literal @ with @@
+ado-search update 12345 --description "@@mention is not a file reference"
+```
+
+After create/update/add-comment, the item is automatically re-fetched and merged into the local JSONL store so it appears in search immediately.
 
 ## Configuration
 

@@ -313,3 +313,199 @@ def fetch(ids: tuple[int, ...], data_dir: str | None, dry_run: bool):
 
     finally:
         db.close()
+
+
+@main.command()
+@click.option("--type", "work_item_type", required=True, help="Work item type (Bug, User Story, etc.)")
+@click.option("--title", required=True, help="Work item title")
+@click.option("--description", default=None, help="Description (HTML or @file.html)")
+@click.option("--acceptance-criteria", default=None, help="Acceptance criteria (HTML or @file.html)")
+@click.option("--state", default=None, help="Initial state")
+@click.option("--area", default=None, help="Area path")
+@click.option("--iteration", default=None, help="Iteration path")
+@click.option("--assigned-to", default=None, help="Assignee email or display name")
+@click.option("--tags", default=None, help="Tags (semicolon-separated)")
+@click.option("--priority", type=click.IntRange(1, 4), default=None, help="Priority (1-4)")
+@click.option("--story-points", type=float, default=None, help="Story points / effort")
+@click.option("--field", "extra_fields", multiple=True,
+              help="Additional field as Key=Value (repeatable)")
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Data directory (default: ./.ado-search)")
+@click.option("--dry-run", is_flag=True, help="Preview without creating")
+def create(work_item_type, title, description, acceptance_criteria, state, area,
+           iteration, assigned_to, tags, priority, story_points, extra_fields,
+           data_dir, dry_run):
+    """Create a new work item in Azure DevOps."""
+    data_path = Path(data_dir) if data_dir else _default_data_dir()
+    config_path = data_path / "config.toml"
+
+    if not config_path.exists():
+        click.echo("Error: Not initialized. Run 'ado-search init' first.", err=True)
+        raise SystemExit(1)
+
+    cfg = load_config(config_path)
+    org = cfg["organization"]["url"]
+    project = cfg["organization"]["project"]
+    auth_method = cfg["auth"]["method"]
+
+    pat = ""
+    if auth_method == "pat":
+        from ado_search.auth import get_pat
+        pat = get_pat(cfg)
+
+    from ado_search.write_workitems import create_work_item, resolve_fields, resolve_value
+
+    description = resolve_value(description)
+    acceptance_criteria = resolve_value(acceptance_criteria)
+
+    field_values = resolve_fields(
+        description=description, acceptance_criteria=acceptance_criteria,
+        state=state, area=area, iteration=iteration, assigned_to=assigned_to,
+        tags=tags, priority=priority, story_points=story_points,
+        extra_fields=extra_fields,
+    )
+
+    db = Database(data_path / "index.db")
+    db.initialize()
+
+    try:
+        record = asyncio.run(create_work_item(
+            org=org, project=project, auth_method=auth_method, pat=pat,
+            data_dir=data_path,
+            work_item_type=work_item_type, title=title,
+            field_values=field_values, dry_run=dry_run,
+        ))
+
+        if not dry_run and record:
+            _ensure_index(data_path, db, force=True)
+            click.echo(
+                f"Created work item #{record['id']}: {record.get('title', title)} "
+                f"({record.get('type', work_item_type)}, {record.get('state', 'New')})"
+            )
+    finally:
+        db.close()
+
+
+@main.command()
+@click.argument("work_item_id", type=int)
+@click.option("--title", default=None, help="New title")
+@click.option("--state", default=None, help="New state")
+@click.option("--description", default=None, help="New description (HTML or @file.html)")
+@click.option("--acceptance-criteria", default=None, help="New acceptance criteria (HTML or @file.html)")
+@click.option("--area", default=None, help="New area path")
+@click.option("--iteration", default=None, help="New iteration path")
+@click.option("--assigned-to", default=None, help="New assignee")
+@click.option("--tags", default=None, help="New tags (semicolon-separated)")
+@click.option("--priority", type=int, default=None, help="New priority (1-4)")
+@click.option("--story-points", type=float, default=None, help="New story points")
+@click.option("--field", "extra_fields", multiple=True,
+              help="Additional field as Key=Value (repeatable)")
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Data directory (default: ./.ado-search)")
+@click.option("--dry-run", is_flag=True, help="Preview without updating")
+def update(work_item_id, title, state, description, acceptance_criteria, area,
+           iteration, assigned_to, tags, priority, story_points, extra_fields,
+           data_dir, dry_run):
+    """Update an existing work item in Azure DevOps."""
+    data_path = Path(data_dir) if data_dir else _default_data_dir()
+    config_path = data_path / "config.toml"
+
+    if not config_path.exists():
+        click.echo("Error: Not initialized. Run 'ado-search init' first.", err=True)
+        raise SystemExit(1)
+
+    from ado_search.write_workitems import resolve_fields, resolve_value, update_work_item
+
+    description = resolve_value(description)
+    acceptance_criteria = resolve_value(acceptance_criteria)
+
+    field_values = resolve_fields(
+        title=title, description=description, acceptance_criteria=acceptance_criteria,
+        state=state, area=area, iteration=iteration, assigned_to=assigned_to,
+        tags=tags, priority=priority, story_points=story_points,
+        extra_fields=extra_fields,
+    )
+
+    if not field_values:
+        click.echo("Error: No fields to update. Provide at least one option.", err=True)
+        raise SystemExit(1)
+
+    cfg = load_config(config_path)
+    org = cfg["organization"]["url"]
+    project = cfg["organization"]["project"]
+    auth_method = cfg["auth"]["method"]
+
+    pat = ""
+    if auth_method == "pat":
+        from ado_search.auth import get_pat
+        pat = get_pat(cfg)
+
+    db = Database(data_path / "index.db")
+    db.initialize()
+
+    try:
+        record = asyncio.run(update_work_item(
+            org=org, project=project, auth_method=auth_method, pat=pat,
+            data_dir=data_path,
+            work_item_id=work_item_id,
+            field_values=field_values, dry_run=dry_run,
+        ))
+
+        if not dry_run and record:
+            _ensure_index(data_path, db, force=True)
+            click.echo(
+                f"Updated work item #{record.get('id', work_item_id)}: "
+                f"{record.get('title', '')} "
+                f"({record.get('type', '')}, {record.get('state', '')})"
+            )
+    finally:
+        db.close()
+
+
+@main.command("add-comment")
+@click.argument("work_item_id", type=int)
+@click.argument("text")
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Data directory (default: ./.ado-search)")
+@click.option("--dry-run", is_flag=True, help="Preview without posting")
+def add_comment_cmd(work_item_id, text, data_dir, dry_run):
+    """Add a comment to an Azure DevOps work item.
+
+    TEXT can be an inline HTML string or @path/to/file.html to read from a file.
+    """
+    data_path = Path(data_dir) if data_dir else _default_data_dir()
+    config_path = data_path / "config.toml"
+
+    if not config_path.exists():
+        click.echo("Error: Not initialized. Run 'ado-search init' first.", err=True)
+        raise SystemExit(1)
+
+    from ado_search.write_workitems import add_comment, resolve_value
+
+    text = resolve_value(text)
+
+    cfg = load_config(config_path)
+    org = cfg["organization"]["url"]
+    project = cfg["organization"]["project"]
+    auth_method = cfg["auth"]["method"]
+
+    pat = ""
+    if auth_method == "pat":
+        from ado_search.auth import get_pat
+        pat = get_pat(cfg)
+
+    db = Database(data_path / "index.db")
+    db.initialize()
+
+    try:
+        record = asyncio.run(add_comment(
+            org=org, project=project, auth_method=auth_method, pat=pat,
+            data_dir=data_path,
+            work_item_id=work_item_id, text=text, dry_run=dry_run,
+        ))
+
+        if not dry_run and record:
+            _ensure_index(data_path, db, force=True)
+            click.echo(f"Added comment to work item #{record.get('id', work_item_id)}")
+    finally:
+        db.close()

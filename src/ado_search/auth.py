@@ -17,6 +17,9 @@ OP_COMMENTS = "comments"
 OP_UPDATES = "updates"
 OP_ODATA_QUERY = "odata-query"
 OP_ATTACHMENT = "attachment"
+OP_CREATE = "create"
+OP_UPDATE = "update"
+OP_ADD_COMMENT = "add-comment"
 
 
 @dataclass
@@ -51,6 +54,7 @@ def _resolve_url(op: OperationDef, *, org: str, project: str, **kwargs) -> str:
     url_project = quote(project or "", safe="")
     url_wiki = quote(kwargs.get("wiki") or "", safe="")
     work_item_id = kwargs.get("work_item_id", "")
+    work_item_type = kwargs.get("work_item_type", "")
     path = kwargs.get("path", "")
 
     api_path = (
@@ -58,6 +62,7 @@ def _resolve_url(op: OperationDef, *, org: str, project: str, **kwargs) -> str:
         .replace("{url_project}", url_project)
         .replace("{url_wiki}", url_wiki)
         .replace("{work_item_id}", str(work_item_id))
+        .replace("{work_item_type}", quote(str(work_item_type), safe=""))
     )
 
     api_url = f"{org}/{api_path}"
@@ -132,6 +137,38 @@ OPERATIONS: dict[str, OperationDef] = {
     OP_ATTACHMENT: OperationDef(
         raw_url=True,
     ),
+    OP_CREATE: OperationDef(
+        method="POST",
+        path="{url_project}/_apis/wit/workitems/${work_item_type}",
+        query_params=["api-version=7.1"],
+        has_body=True,
+        use_az_rest=False,
+        az_cli_cmd=["boards", "work-item", "create"],
+        az_cli_args=lambda title, work_item_type, fields=None, **_: [
+            "--title", title, "--type", work_item_type,
+            *(["--fields", *fields] if fields else []),
+        ],
+    ),
+    OP_UPDATE: OperationDef(
+        method="PATCH",
+        path="{url_project}/_apis/wit/workitems/{work_item_id}",
+        query_params=["api-version=7.1"],
+        has_body=True,
+        use_az_rest=False,
+        az_cli_cmd=["boards", "work-item", "update"],
+        az_cli_args=lambda work_item_id, title=None, fields=None, **_: [
+            "--id", str(work_item_id),
+            *(["--title", title] if title else []),
+            *(["--fields", *fields] if fields else []),
+        ],
+        az_cli_include_project=False,
+    ),
+    OP_ADD_COMMENT: OperationDef(
+        method="POST",
+        path="{url_project}/_apis/wit/workitems/{work_item_id}/comments",
+        query_params=["api-version=7.1-preview.4"],
+        has_body=True,
+    ),
 }
 
 
@@ -145,12 +182,18 @@ def build_az_cli_command(
     wiki: str | None = None,
     path: str | None = None,
     url: str | None = None,
+    work_item_type: str | None = None,
+    title: str | None = None,
+    fields: list[str] | None = None,
+    body: str | bytes | None = None,
+    content_type: str | None = None,
 ) -> list[str]:
     op = OPERATIONS.get(operation)
     if op is None:
         raise ValueError(f"Unknown operation: {operation}")
 
-    kwargs = dict(wiql=wiql, work_item_id=work_item_id, wiki=wiki, path=path, url=url)
+    kwargs = dict(wiql=wiql, work_item_id=work_item_id, wiki=wiki, path=path, url=url,
+                  work_item_type=work_item_type, title=title, fields=fields)
 
     # Operations that use specific az CLI subcommands
     if not op.use_az_rest and op.az_cli_args is not None:
@@ -175,10 +218,15 @@ def build_az_cli_command(
                 "--url-parameters", *url_params,
                 "--output", "json"]
 
-    return ["az", "rest", "--method", "get",
-            "--resource", ADO_RESOURCE_ID,
-            "--url", api_url,
-            "--output", "json"]
+    cmd = ["az", "rest", "--method", op.method.lower(),
+           "--resource", ADO_RESOURCE_ID,
+           "--url", api_url]
+    if body is not None:
+        cmd.extend(["--body", body if isinstance(body, str) else body.decode("utf-8")])
+    if content_type:
+        cmd.extend(["--headers", f"Content-Type={content_type}"])
+    cmd.extend(["--output", "json"])
+    return cmd
 
 
 def build_powershell_command(
@@ -191,16 +239,22 @@ def build_powershell_command(
     wiki: str | None = None,
     path: str | None = None,
     url: str | None = None,
+    work_item_type: str | None = None,
+    body: str | bytes | None = None,
+    content_type: str | None = None,
+    **_extra,
 ) -> list[str]:
     op = OPERATIONS.get(operation)
     if op is None:
         raise ValueError(f"Unknown operation: {operation}")
 
     token_expr = f"(Get-AzAccessToken -ResourceUrl '{ADO_RESOURCE_ID}').Token"
-    headers = '@{Authorization = "Bearer $token"; "Content-Type" = "application/json"}'
+    ct = content_type or "application/json"
+    headers = f'@{{Authorization = "Bearer $token"; "Content-Type" = "{ct}"}}'
 
     api_url = _resolve_url(op, org=org, project=project, wiki=wiki, path=path,
-                           work_item_id=work_item_id, url=url)
+                           work_item_id=work_item_id, url=url,
+                           work_item_type=work_item_type)
 
     # Escape for PowerShell
     if op.raw_url:
@@ -208,12 +262,23 @@ def build_powershell_command(
     else:
         safe_url = api_url  # already URL-encoded, no PS escaping needed
 
-    if op.has_body and operation == OP_QUERY:
-        body = '{{"query": "{wiql}"}}'.replace("{wiql}", _escape_ps(wiql))
+    method = op.method.capitalize()  # Get, Post, Patch
+
+    if body is not None:
+        body_str = body.decode("utf-8") if isinstance(body, bytes) else body
+        escaped_body = _escape_ps(body_str)
         script = (
             f"$token = {token_expr}; "
             f"$headers = {headers}; "
-            f"$body = '{body}'; "
+            f"$body = '{escaped_body}'; "
+            f"Invoke-RestMethod -Uri '{safe_url}' -Method {method} -Headers $headers -Body $body | ConvertTo-Json -Depth 10"
+        )
+    elif op.has_body and operation == OP_QUERY:
+        wiql_body = '{{"query": "{wiql}"}}'.replace("{wiql}", _escape_ps(wiql))
+        script = (
+            f"$token = {token_expr}; "
+            f"$headers = {headers}; "
+            f"$body = '{wiql_body}'; "
             f"Invoke-RestMethod -Uri '{safe_url}' -Method Post -Headers $headers -Body $body | ConvertTo-Json -Depth 10"
         )
     else:
@@ -263,6 +328,10 @@ def pat_request(
     wiki: str | None = None,
     path: str | None = None,
     url: str | None = None,
+    work_item_type: str | None = None,
+    body: str | bytes | None = None,
+    content_type: str | None = None,
+    **_extra,
 ) -> dict | list:
     """Make a direct HTTP request using PAT Basic auth. Returns parsed JSON."""
     import base64
@@ -275,20 +344,24 @@ def pat_request(
         raise ValueError(f"Unknown operation: {operation}")
 
     api_url = _resolve_url(op, org=org, project=project, wiki=wiki, path=path,
-                           work_item_id=work_item_id, url=url)
+                           work_item_id=work_item_id, url=url,
+                           work_item_type=work_item_type)
 
     creds = base64.b64encode(f":{pat}".encode()).decode()
+    ct = content_type or "application/json"
     headers = {
         "Authorization": f"Basic {creds}",
-        "Content-Type": "application/json",
+        "Content-Type": ct,
     }
 
-    body = None
-    if op.has_body and operation == OP_QUERY:
-        body = json.dumps({"query": wiql}).encode()
+    data = None
+    if body is not None:
+        data = body if isinstance(body, bytes) else body.encode("utf-8")
+    elif op.has_body and operation == OP_QUERY:
+        data = json.dumps({"query": wiql}).encode()
 
     method = op.method
-    req = Request(api_url, data=body, headers=headers, method=method)
+    req = Request(api_url, data=data, headers=headers, method=method)
     try:
         with urlopen(req, timeout=60) as resp:
             return json.loads(resp.read().decode("utf-8"))

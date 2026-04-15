@@ -104,6 +104,126 @@ def test_build_az_cli_command_wiki_page_show():
     assert "includeContent=true" in param_str
 
 
+def test_build_az_cli_command_create():
+    cmd = build_az_cli_command(
+        "create",
+        org="https://dev.azure.com/contoso",
+        project="MyProject",
+        title="New Bug",
+        work_item_type="Bug",
+        fields=["System.Description=A bug description"],
+    )
+    assert cmd[0] == "az"
+    assert "work-item" in cmd
+    assert "create" in cmd
+    assert "--title" in cmd
+    assert cmd[cmd.index("--title") + 1] == "New Bug"
+    assert "--type" in cmd
+    assert cmd[cmd.index("--type") + 1] == "Bug"
+    assert "--fields" in cmd
+    assert "System.Description=A bug description" in cmd
+
+
+def test_build_az_cli_command_update():
+    cmd = build_az_cli_command(
+        "update",
+        org="https://dev.azure.com/contoso",
+        project="MyProject",
+        work_item_id=12345,
+        title="Updated Title",
+        fields=["System.State=Active"],
+    )
+    assert "update" in cmd
+    assert "--id" in cmd
+    assert "12345" in cmd
+    assert "--title" in cmd
+    assert cmd[cmd.index("--title") + 1] == "Updated Title"
+    assert "--fields" in cmd
+    assert "System.State=Active" in cmd
+
+
+def test_build_az_cli_command_update_no_title():
+    """Update without --title should not include --title flag."""
+    cmd = build_az_cli_command(
+        "update",
+        org="https://dev.azure.com/contoso",
+        project="MyProject",
+        work_item_id=12345,
+        fields=["System.State=Active"],
+    )
+    assert "--title" not in cmd
+    assert "--id" in cmd
+
+
+def test_build_powershell_command_create():
+    cmd = build_powershell_command(
+        "create",
+        org="https://dev.azure.com/contoso",
+        project="MyProject",
+        work_item_type="Bug",
+        body='[{"op":"add","path":"/fields/System.Title","value":"Test"}]',
+        content_type="application/json-patch+json",
+    )
+    assert cmd[0] == "pwsh"
+    ps_script = cmd[cmd.index("-Command") + 1]
+    assert "application/json-patch+json" in ps_script
+    assert "-Method Post" in ps_script
+    assert "System.Title" in ps_script
+
+
+def test_build_powershell_command_update():
+    cmd = build_powershell_command(
+        "update",
+        org="https://dev.azure.com/contoso",
+        project="MyProject",
+        work_item_id=12345,
+        body='[{"op":"add","path":"/fields/System.State","value":"Active"}]',
+        content_type="application/json-patch+json",
+    )
+    ps_script = cmd[cmd.index("-Command") + 1]
+    assert "-Method Patch" in ps_script
+    assert "application/json-patch+json" in ps_script
+
+
+def test_build_az_cli_command_add_comment():
+    """add-comment uses az rest with POST method and body."""
+    cmd = build_az_cli_command(
+        "add-comment",
+        org="https://dev.azure.com/contoso",
+        project="MyProject",
+        work_item_id=12345,
+        body='{"text": "<p>Nice work!</p>"}',
+        content_type="application/json",
+    )
+    assert cmd[0] == "az"
+    assert "rest" in cmd
+    assert "--method" in cmd
+    assert cmd[cmd.index("--method") + 1] == "post"
+    assert "--body" in cmd
+    body = cmd[cmd.index("--body") + 1]
+    assert '"text"' in body
+    assert "--url" in cmd
+    url = cmd[cmd.index("--url") + 1]
+    assert "/comments" in url
+    assert "12345" in url
+
+
+def test_build_powershell_command_add_comment():
+    cmd = build_powershell_command(
+        "add-comment",
+        org="https://dev.azure.com/contoso",
+        project="MyProject",
+        work_item_id=12345,
+        body='{"text": "<p>Nice work!</p>"}',
+        content_type="application/json",
+    )
+    assert cmd[0] == "pwsh"
+    ps_script = cmd[cmd.index("-Command") + 1]
+    assert "-Method Post" in ps_script
+    assert "application/json" in ps_script
+    assert "/comments" in ps_script
+
+
 def test_build_download_command_az_cli():
     cmd = build_download_command(
         "https://dev.azure.com/contoso/_apis/wit/attachments/abc-123",

@@ -70,7 +70,7 @@ def _resolve_url(op: OperationDef, *, org: str, project: str, **kwargs) -> str:
     # Build query params
     params = list(op.query_params)
     if "{path}" in " ".join(op.query_params):
-        params = [p.replace("{path}", path) for p in params]
+        params = [p.replace("{path}", quote(path or "", safe="/")) for p in params]
     if "{encoded_path}" in " ".join(op.query_params):
         params = [p.replace("{encoded_path}", quote(path or "", safe="")) for p in params]
 

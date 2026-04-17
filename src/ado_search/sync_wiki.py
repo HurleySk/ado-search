@@ -62,7 +62,7 @@ async def _list_wiki_pages(
     """List pages for a single wiki. Returns (wiki_name, pages) or (wiki_name, None) on error."""
     result = await run_operation(auth_method, OP_WIKI_PAGE_LIST, org=org, project=project, pat=pat, wiki=wiki_name)
     if result.returncode != 0:
-        click.echo(f"  Warning: Failed to list pages for wiki {wiki_name}", err=True)
+        click.echo(f"  Warning: Failed to list pages for wiki {wiki_name}")
         return wiki_name, None
 
     tree = result.parse_json()
@@ -153,7 +153,7 @@ async def sync_wiki(
 
     fetched_records, fetch_errors = split_results(results, key="path")
     for e in fetch_errors:
-        click.echo(f"  Warning: {e}", err=True)
+        click.echo(f"  Warning: {e}")
     total_errors += len(fetch_errors)
     total_fetched = len(fetched_records)
 

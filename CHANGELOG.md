@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.0] — 2026-04-17
+
+### Fixed
+
+- **Wiki page sync broken with PAT auth** — `_resolve_url()` was not URL-encoding wiki page path values in query parameters. When paths contained spaces (common in project wikis), Python's `urlopen` raised `InvalidURL`, causing every page fetch to fail silently. Now encodes path values with `quote(path, safe="/")` so slashes are preserved but spaces and special characters are properly percent-encoded.
+
 ## [0.10.0] — 2026-04-15
 
 ### Added

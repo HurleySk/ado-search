@@ -341,7 +341,7 @@ class Database:
         conn.execute("DELETE FROM work_item_state_changes WHERE item_id = ?", (item_id,))
         for c in changes:
             conn.execute(
-                """INSERT INTO work_item_state_changes
+                """INSERT OR REPLACE INTO work_item_state_changes
                    (item_id, from_state, to_state, changed_date, changed_by)
                    VALUES (?, ?, ?, ?, ?)""",
                 (item_id, c["from"], c["to"], c["date"], c.get("by", "")),

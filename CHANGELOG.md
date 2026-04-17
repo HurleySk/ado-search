@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.1] — 2026-04-17
+
+### Fixed
+
+- **Sync crash on duplicate state changes** — `reindex_from_jsonl` failed with `sqlite3.IntegrityError: UNIQUE constraint failed` when a work item had multiple state transitions to the same state on the same day (date truncated to day precision). Changed `INSERT` to `INSERT OR REPLACE` in `upsert_state_changes()` so duplicate composite keys are silently resolved.
+
 ## [1.0.0] — 2026-04-17
 
 ### Fixed

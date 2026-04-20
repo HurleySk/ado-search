@@ -92,6 +92,9 @@ ado-search create --type "User Story" --title "Add dark mode" \
 # Update a work item
 ado-search update 12345 --state Active --assigned-to "user@example.com"
 
+# Close as duplicate (--reason sets Microsoft.VSTS.Common.ResolvedReason)
+ado-search update 67154 --state Closed --reason Duplicate
+
 # Set arbitrary ADO fields (including custom fields)
 ado-search create --type Task --title "Research" --field "Custom.Effort=3"
 ado-search update 12345 --field "System.AreaPath=Project\Team" --field "Custom.Sprint=Sprint 5"

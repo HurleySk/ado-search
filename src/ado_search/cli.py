@@ -321,6 +321,7 @@ def fetch(ids: tuple[int, ...], data_dir: str | None, dry_run: bool):
 @click.option("--description", default=None, help="Description (HTML or @file.html)")
 @click.option("--acceptance-criteria", default=None, help="Acceptance criteria (HTML or @file.html)")
 @click.option("--state", default=None, help="Initial state")
+@click.option("--reason", default=None, help="Resolved/closed reason (e.g., Duplicate, Fixed)")
 @click.option("--area", default=None, help="Area path")
 @click.option("--iteration", default=None, help="Iteration path")
 @click.option("--assigned-to", default=None, help="Assignee email or display name")
@@ -332,8 +333,8 @@ def fetch(ids: tuple[int, ...], data_dir: str | None, dry_run: bool):
 @click.option("--data-dir", type=click.Path(), default=None,
               help="Data directory (default: ./.ado-search)")
 @click.option("--dry-run", is_flag=True, help="Preview without creating")
-def create(work_item_type, title, description, acceptance_criteria, state, area,
-           iteration, assigned_to, tags, priority, story_points, extra_fields,
+def create(work_item_type, title, description, acceptance_criteria, state, reason,
+           area, iteration, assigned_to, tags, priority, story_points, extra_fields,
            data_dir, dry_run):
     """Create a new work item in Azure DevOps."""
     data_path = Path(data_dir) if data_dir else _default_data_dir()
@@ -360,9 +361,9 @@ def create(work_item_type, title, description, acceptance_criteria, state, area,
 
     field_values = resolve_fields(
         description=description, acceptance_criteria=acceptance_criteria,
-        state=state, area=area, iteration=iteration, assigned_to=assigned_to,
-        tags=tags, priority=priority, story_points=story_points,
-        extra_fields=extra_fields,
+        state=state, reason=reason, area=area, iteration=iteration,
+        assigned_to=assigned_to, tags=tags, priority=priority,
+        story_points=story_points, extra_fields=extra_fields,
     )
 
     db = Database(data_path / "index.db")
@@ -390,6 +391,7 @@ def create(work_item_type, title, description, acceptance_criteria, state, area,
 @click.argument("work_item_id", type=int)
 @click.option("--title", default=None, help="New title")
 @click.option("--state", default=None, help="New state")
+@click.option("--reason", default=None, help="Resolved/closed reason (e.g., Duplicate, Fixed)")
 @click.option("--description", default=None, help="New description (HTML or @file.html)")
 @click.option("--acceptance-criteria", default=None, help="New acceptance criteria (HTML or @file.html)")
 @click.option("--area", default=None, help="New area path")
@@ -403,7 +405,7 @@ def create(work_item_type, title, description, acceptance_criteria, state, area,
 @click.option("--data-dir", type=click.Path(), default=None,
               help="Data directory (default: ./.ado-search)")
 @click.option("--dry-run", is_flag=True, help="Preview without updating")
-def update(work_item_id, title, state, description, acceptance_criteria, area,
+def update(work_item_id, title, state, reason, description, acceptance_criteria, area,
            iteration, assigned_to, tags, priority, story_points, extra_fields,
            data_dir, dry_run):
     """Update an existing work item in Azure DevOps."""
@@ -421,9 +423,9 @@ def update(work_item_id, title, state, description, acceptance_criteria, area,
 
     field_values = resolve_fields(
         title=title, description=description, acceptance_criteria=acceptance_criteria,
-        state=state, area=area, iteration=iteration, assigned_to=assigned_to,
-        tags=tags, priority=priority, story_points=story_points,
-        extra_fields=extra_fields,
+        state=state, reason=reason, area=area, iteration=iteration,
+        assigned_to=assigned_to, tags=tags, priority=priority,
+        story_points=story_points, extra_fields=extra_fields,
     )
 
     if not field_values:

@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.0] — 2026-04-20
+
+### Added
+
+- **`--reason` option on `create` and `update`** — sets `Microsoft.VSTS.Common.ResolvedReason` directly, e.g., `ado-search update 67154 --state Closed --reason Duplicate`. Previously required `--field "Microsoft.VSTS.Common.ResolvedReason=Duplicate"`.
+
 ## [1.0.1] — 2026-04-17
 
 ### Fixed

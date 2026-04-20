@@ -57,6 +57,12 @@ def test_resolve_fields_maps_named_options():
     assert fields["Microsoft.VSTS.Scheduling.StoryPoints"] == 5.0
 
 
+def test_resolve_fields_reason():
+    fields = resolve_fields(state="Closed", reason="Duplicate")
+    assert fields["System.State"] == "Closed"
+    assert fields["Microsoft.VSTS.Common.ResolvedReason"] == "Duplicate"
+
+
 def test_resolve_fields_extra_fields():
     fields = resolve_fields(extra_fields=["Custom.Field=hello", "System.Tags=tag1; tag2"])
     assert fields["Custom.Field"] == "hello"

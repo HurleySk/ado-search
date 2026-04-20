@@ -6,6 +6,7 @@ import os
 import shutil
 from contextlib import nullcontext
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TypedDict
 
 
@@ -158,13 +159,10 @@ async def download_binary(
     semaphore: asyncio.Semaphore | None = None,
 ) -> str | None:
     """Download a binary file. Returns None on success, error string on failure."""
-    from pathlib import Path as _Path
-    from contextlib import nullcontext as _nullcontext
-
-    dest = _Path(dest_path) if not isinstance(dest_path, _Path) else dest_path
+    dest = Path(dest_path) if not isinstance(dest_path, Path) else dest_path
     dest.parent.mkdir(parents=True, exist_ok=True)
 
-    async with semaphore if semaphore is not None else _nullcontext():
+    async with semaphore if semaphore is not None else nullcontext():
         if auth_method == "pat":
             from ado_search.auth import pat_download_binary
             try:

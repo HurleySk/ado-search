@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,6 +15,44 @@ from ado_search.search import search, format_results
 
 def _default_data_dir() -> Path:
     return Path.cwd() / ".ado-search"
+
+
+class _Conn:
+    """Resolved connection info from config."""
+    __slots__ = ("cfg", "org", "project", "auth_method", "pat", "data_path")
+
+    def __init__(self, cfg, org, project, auth_method, pat, data_path):
+        self.cfg = cfg
+        self.org = org
+        self.project = project
+        self.auth_method = auth_method
+        self.pat = pat
+        self.data_path = data_path
+
+
+def _load_conn(data_dir: str | None) -> _Conn:
+    """Load config, resolve PAT, and return connection info.
+
+    Exits with error if not initialized.
+    """
+    data_path = Path(data_dir) if data_dir else _default_data_dir()
+    config_path = data_path / "config.toml"
+
+    if not config_path.exists():
+        click.echo("Error: Not initialized. Run 'ado-search init' first.", err=True)
+        raise SystemExit(1)
+
+    cfg = load_config(config_path)
+    org = cfg["organization"]["url"]
+    project = cfg["organization"]["project"]
+    auth_method = cfg["auth"]["method"]
+
+    pat = ""
+    if auth_method == "pat":
+        from ado_search.auth import get_pat
+        pat = get_pat(cfg)
+
+    return _Conn(cfg, org, project, auth_method, pat, data_path)
 
 
 def _ensure_index(data_path: Path, db: Database, *, force: bool = False) -> None:
@@ -35,6 +74,17 @@ def _ensure_index(data_path: Path, db: Database, *, force: bool = False) -> None
 
     if needs_reindex:
         db.reindex_from_jsonl(wi_jsonl, wiki_jsonl)
+
+
+@contextmanager
+def _open_db(data_path: Path):
+    """Open and initialize the database, closing it on exit."""
+    db = Database(data_path / "index.db")
+    db.initialize()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 @click.group()
@@ -67,9 +117,8 @@ def init(org: str, project: str, auth_method: str, pat: str | None, data_dir: st
     config_path = data_path / "config.toml"
     save_config(cfg, config_path)
 
-    db = Database(data_path / "index.db")
-    db.initialize()
-    db.close()
+    with _open_db(data_path):
+        pass
 
     click.echo(f"Initialized ado-search at {data_path}")
     click.echo(f"  Organization: {org}")
@@ -82,36 +131,18 @@ def init(org: str, project: str, auth_method: str, pat: str | None, data_dir: st
 @click.option("--dry-run", is_flag=True, help="Show what would be synced without writing")
 def sync(data_dir: str | None, dry_run: bool):
     """Sync work items and wiki pages from Azure DevOps."""
-    data_path = Path(data_dir) if data_dir else _default_data_dir()
-    config_path = data_path / "config.toml"
+    conn = _load_conn(data_dir)
+    sync_cfg = conn.cfg["sync"]
 
-    if not config_path.exists():
-        click.echo("Error: Not initialized. Run 'ado-search init' first.", err=True)
-        raise SystemExit(1)
-
-    cfg = load_config(config_path)
-    org = cfg["organization"]["url"]
-    project = cfg["organization"]["project"]
-    auth_method = cfg["auth"]["method"]
-    sync_cfg = cfg["sync"]
-
-    # Resolve PAT from config or env var
-    pat = ""
-    if auth_method == "pat":
-        from ado_search.auth import get_pat
-        pat = get_pat(cfg)
-
-    db = Database(data_path / "index.db")
-    db.initialize()
-
-    try:
+    with _open_db(conn.data_path) as db:
         from ado_search.sync_workitems import sync_work_items
         from ado_search.sync_wiki import sync_wiki
 
         click.echo("Syncing work items...")
         wi_stats = asyncio.run(sync_work_items(
-            org=org, project=project, auth_method=auth_method, pat=pat,
-            data_dir=data_path,
+            org=conn.org, project=conn.project,
+            auth_method=conn.auth_method, pat=conn.pat,
+            data_dir=conn.data_path,
             work_item_types=sync_cfg.get("work_item_types", []),
             area_paths=sync_cfg.get("area_paths", []),
             states=sync_cfg.get("states", []),
@@ -125,8 +156,9 @@ def sync(data_dir: str | None, dry_run: bool):
 
         click.echo("Syncing wiki pages...")
         wiki_stats = asyncio.run(sync_wiki(
-            org=org, project=project, auth_method=auth_method, pat=pat,
-            data_dir=data_path,
+            org=conn.org, project=conn.project,
+            auth_method=conn.auth_method, pat=conn.pat,
+            data_dir=conn.data_path,
             wiki_names=sync_cfg.get("wiki_names", []),
             max_concurrent=sync_cfg.get("performance", {}).get("max_concurrent", 5),
             dry_run=dry_run,
@@ -134,15 +166,12 @@ def sync(data_dir: str | None, dry_run: bool):
         click.echo(f"  Wiki pages: {wiki_stats['fetched']} synced, {wiki_stats['errors']} errors")
 
         if not dry_run:
-            wi_jsonl = data_path / "work-items.jsonl"
-            wiki_jsonl = data_path / "wiki-pages.jsonl"
+            wi_jsonl = conn.data_path / "work-items.jsonl"
+            wiki_jsonl = conn.data_path / "wiki-pages.jsonl"
             db.reindex_from_jsonl(wi_jsonl, wiki_jsonl)
-            cfg["sync"]["last_sync"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            save_config(cfg, config_path)
+            conn.cfg["sync"]["last_sync"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            save_config(conn.cfg, conn.data_path / "config.toml")
             click.echo("Sync complete.")
-
-    finally:
-        db.close()
 
 
 @main.command("search")
@@ -168,10 +197,7 @@ def search_cmd(query, type_filter, state_filter, area_filter, assigned_to, tag_f
         raise SystemExit(1)
 
     db_is_new = not (data_path / "index.db").exists()
-    db = Database(data_path / "index.db")
-    db.initialize()
-
-    try:
+    with _open_db(data_path) as db:
         _ensure_index(data_path, db, force=db_is_new)
 
         results = search(
@@ -190,9 +216,6 @@ def search_cmd(query, type_filter, state_filter, area_filter, assigned_to, tag_f
 
         click.echo(format_results(results, fmt=fmt, data_dir=data_path))
 
-    finally:
-        db.close()
-
 
 @main.command()
 @click.argument("item_id")
@@ -202,10 +225,7 @@ def show(item_id: str, data_dir: str | None):
     data_path = Path(data_dir) if data_dir else _default_data_dir()
 
     db_is_new = not (data_path / "index.db").exists()
-    db = Database(data_path / "index.db")
-    db.initialize()
-
-    try:
+    with _open_db(data_path) as db:
         _ensure_index(data_path, db, force=db_is_new)
 
         # Try as work item ID
@@ -258,9 +278,6 @@ def show(item_id: str, data_dir: str | None):
         click.echo(f"Error: Item '{item_id}' not found.", err=True)
         raise SystemExit(1)
 
-    finally:
-        db.close()
-
 
 @main.command()
 @click.argument("ids", nargs=-1, type=int, required=True)
@@ -269,50 +286,27 @@ def show(item_id: str, data_dir: str | None):
 @click.option("--dry-run", is_flag=True, help="Preview without writing")
 def fetch(ids: tuple[int, ...], data_dir: str | None, dry_run: bool):
     """Fetch specific work items by ID and add to local store."""
-    data_path = Path(data_dir) if data_dir else _default_data_dir()
-    config_path = data_path / "config.toml"
+    conn = _load_conn(data_dir)
 
-    if not config_path.exists():
-        click.echo("Error: Not initialized. Run 'ado-search init' first.", err=True)
-        raise SystemExit(1)
-
-    cfg = load_config(config_path)
-    org = cfg["organization"]["url"]
-    project = cfg["organization"]["project"]
-    auth_method = cfg["auth"]["method"]
-
-    pat = ""
-    if auth_method == "pat":
-        from ado_search.auth import get_pat
-        pat = get_pat(cfg)
-
-    db = Database(data_path / "index.db")
-    db.initialize()
-
-    try:
+    with _open_db(conn.data_path) as db:
         from ado_search.sync_workitems import fetch_specific_work_items
 
         click.echo(f"Fetching {len(ids)} work item(s): {list(ids)}")
         stats = asyncio.run(fetch_specific_work_items(
             item_ids=list(ids),
-            org=org,
-            project=project,
-            auth_method=auth_method,
-            pat=pat,
-            data_dir=data_path,
-            max_concurrent=cfg["sync"].get("performance", {}).get("max_concurrent", 5),
+            org=conn.org,
+            project=conn.project,
+            auth_method=conn.auth_method,
+            pat=conn.pat,
+            data_dir=conn.data_path,
+            max_concurrent=conn.cfg["sync"].get("performance", {}).get("max_concurrent", 5),
             dry_run=dry_run,
-            include_attachments=cfg["sync"].get("include_attachments", False),
+            include_attachments=conn.cfg["sync"].get("include_attachments", False),
         ))
 
         if not dry_run:
-            wi_jsonl = data_path / "work-items.jsonl"
-            wiki_jsonl = data_path / "wiki-pages.jsonl"
-            _ensure_index(data_path, db, force=True)
+            _ensure_index(conn.data_path, db, force=True)
             click.echo(f"Fetched {stats['fetched']} work item(s), {stats['errors']} error(s).")
-
-    finally:
-        db.close()
 
 
 @main.command()
@@ -337,22 +331,7 @@ def create(work_item_type, title, description, acceptance_criteria, state, reaso
            area, iteration, assigned_to, tags, priority, story_points, extra_fields,
            data_dir, dry_run):
     """Create a new work item in Azure DevOps."""
-    data_path = Path(data_dir) if data_dir else _default_data_dir()
-    config_path = data_path / "config.toml"
-
-    if not config_path.exists():
-        click.echo("Error: Not initialized. Run 'ado-search init' first.", err=True)
-        raise SystemExit(1)
-
-    cfg = load_config(config_path)
-    org = cfg["organization"]["url"]
-    project = cfg["organization"]["project"]
-    auth_method = cfg["auth"]["method"]
-
-    pat = ""
-    if auth_method == "pat":
-        from ado_search.auth import get_pat
-        pat = get_pat(cfg)
+    conn = _load_conn(data_dir)
 
     from ado_search.write_workitems import create_work_item, resolve_fields, resolve_value
 
@@ -366,25 +345,21 @@ def create(work_item_type, title, description, acceptance_criteria, state, reaso
         story_points=story_points, extra_fields=extra_fields,
     )
 
-    db = Database(data_path / "index.db")
-    db.initialize()
-
-    try:
+    with _open_db(conn.data_path) as db:
         record = asyncio.run(create_work_item(
-            org=org, project=project, auth_method=auth_method, pat=pat,
-            data_dir=data_path,
+            org=conn.org, project=conn.project,
+            auth_method=conn.auth_method, pat=conn.pat,
+            data_dir=conn.data_path,
             work_item_type=work_item_type, title=title,
             field_values=field_values, dry_run=dry_run,
         ))
 
         if not dry_run and record:
-            _ensure_index(data_path, db, force=True)
+            _ensure_index(conn.data_path, db, force=True)
             click.echo(
                 f"Created work item #{record['id']}: {record.get('title', title)} "
                 f"({record.get('type', work_item_type)}, {record.get('state', 'New')})"
             )
-    finally:
-        db.close()
 
 
 @main.command()
@@ -409,13 +384,6 @@ def update(work_item_id, title, state, reason, description, acceptance_criteria,
            iteration, assigned_to, tags, priority, story_points, extra_fields,
            data_dir, dry_run):
     """Update an existing work item in Azure DevOps."""
-    data_path = Path(data_dir) if data_dir else _default_data_dir()
-    config_path = data_path / "config.toml"
-
-    if not config_path.exists():
-        click.echo("Error: Not initialized. Run 'ado-search init' first.", err=True)
-        raise SystemExit(1)
-
     from ado_search.write_workitems import resolve_fields, resolve_value, update_work_item
 
     description = resolve_value(description)
@@ -432,36 +400,24 @@ def update(work_item_id, title, state, reason, description, acceptance_criteria,
         click.echo("Error: No fields to update. Provide at least one option.", err=True)
         raise SystemExit(1)
 
-    cfg = load_config(config_path)
-    org = cfg["organization"]["url"]
-    project = cfg["organization"]["project"]
-    auth_method = cfg["auth"]["method"]
+    conn = _load_conn(data_dir)
 
-    pat = ""
-    if auth_method == "pat":
-        from ado_search.auth import get_pat
-        pat = get_pat(cfg)
-
-    db = Database(data_path / "index.db")
-    db.initialize()
-
-    try:
+    with _open_db(conn.data_path) as db:
         record = asyncio.run(update_work_item(
-            org=org, project=project, auth_method=auth_method, pat=pat,
-            data_dir=data_path,
+            org=conn.org, project=conn.project,
+            auth_method=conn.auth_method, pat=conn.pat,
+            data_dir=conn.data_path,
             work_item_id=work_item_id,
             field_values=field_values, dry_run=dry_run,
         ))
 
         if not dry_run and record:
-            _ensure_index(data_path, db, force=True)
+            _ensure_index(conn.data_path, db, force=True)
             click.echo(
                 f"Updated work item #{record.get('id', work_item_id)}: "
                 f"{record.get('title', '')} "
                 f"({record.get('type', '')}, {record.get('state', '')})"
             )
-    finally:
-        db.close()
 
 
 @main.command("add-comment")
@@ -475,39 +431,140 @@ def add_comment_cmd(work_item_id, text, data_dir, dry_run):
 
     TEXT can be an inline HTML string or @path/to/file.html to read from a file.
     """
-    data_path = Path(data_dir) if data_dir else _default_data_dir()
-    config_path = data_path / "config.toml"
-
-    if not config_path.exists():
-        click.echo("Error: Not initialized. Run 'ado-search init' first.", err=True)
-        raise SystemExit(1)
-
     from ado_search.write_workitems import add_comment, resolve_value
 
     text = resolve_value(text)
+    conn = _load_conn(data_dir)
 
-    cfg = load_config(config_path)
-    org = cfg["organization"]["url"]
-    project = cfg["organization"]["project"]
-    auth_method = cfg["auth"]["method"]
-
-    pat = ""
-    if auth_method == "pat":
-        from ado_search.auth import get_pat
-        pat = get_pat(cfg)
-
-    db = Database(data_path / "index.db")
-    db.initialize()
-
-    try:
+    with _open_db(conn.data_path) as db:
         record = asyncio.run(add_comment(
-            org=org, project=project, auth_method=auth_method, pat=pat,
-            data_dir=data_path,
+            org=conn.org, project=conn.project,
+            auth_method=conn.auth_method, pat=conn.pat,
+            data_dir=conn.data_path,
             work_item_id=work_item_id, text=text, dry_run=dry_run,
         ))
 
         if not dry_run and record:
-            _ensure_index(data_path, db, force=True)
+            _ensure_index(conn.data_path, db, force=True)
             click.echo(f"Added comment to work item #{record.get('id', work_item_id)}")
-    finally:
-        db.close()
+
+
+@main.command("add-link")
+@click.argument("source_id", type=int)
+@click.argument("target_id", type=int)
+@click.option("--type", "link_type", required=True,
+              help="Link type: related, parent, child, duplicate, duplicate-of, depends-on, predecessor, successor (or raw ADO type)")
+@click.option("--comment", default=None, help="Optional comment on the link")
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Data directory (default: ./.ado-search)")
+@click.option("--dry-run", is_flag=True, help="Preview without creating the link")
+def add_link_cmd(source_id, target_id, link_type, comment, data_dir, dry_run):
+    """Add a link between two Azure DevOps work items.
+
+    SOURCE_ID is the work item to modify. TARGET_ID is the work item to link to.
+    """
+    from ado_search.write_workitems import add_link
+
+    conn = _load_conn(data_dir)
+
+    with _open_db(conn.data_path) as db:
+        record = asyncio.run(add_link(
+            org=conn.org, project=conn.project,
+            auth_method=conn.auth_method, pat=conn.pat,
+            data_dir=conn.data_path,
+            source_id=source_id, target_id=target_id,
+            link_type=link_type, comment=comment, dry_run=dry_run,
+        ))
+
+        if not dry_run and record:
+            _ensure_index(conn.data_path, db, force=True)
+            click.echo(
+                f"Added '{link_type}' link from #{source_id} to #{target_id}"
+            )
+
+
+@main.command("list-links")
+@click.argument("work_item_id", type=int)
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Data directory (default: ./.ado-search)")
+def list_links_cmd(work_item_id, data_dir):
+    """List links on an Azure DevOps work item (live from ADO)."""
+    conn = _load_conn(data_dir)
+
+    from ado_search.auth import OP_SHOW
+    from ado_search.runner import fetch_and_parse
+
+    raw = asyncio.run(fetch_and_parse(
+        conn.auth_method, OP_SHOW, f"#{work_item_id}",
+        org=conn.org, project=conn.project, pat=conn.pat,
+        work_item_id=work_item_id,
+    ))
+
+    if isinstance(raw, str):
+        click.echo(f"Error: {raw}", err=True)
+        raise SystemExit(1)
+
+    relations = raw.get("relations") or []
+    skip_types = {"AttachedFile", "Hyperlink", "ArtifactLink"}
+    links = []
+    for rel in relations:
+        rel_type = rel.get("rel", "")
+        if rel_type in skip_types:
+            continue
+        url = rel.get("url", "")
+        if "_apis/wit/workItems/" not in url:
+            continue
+        attrs = rel.get("attributes", {})
+        name = attrs.get("name", rel_type)
+        target_id = url.rsplit("/", 1)[-1]
+        link_comment = attrs.get("comment", "")
+        links.append({"name": name, "rel": rel_type, "target_id": target_id, "comment": link_comment})
+
+    if not links:
+        click.echo(f"No links on work item #{work_item_id}")
+        return
+
+    click.echo(f"Links on work item #{work_item_id}:")
+    for link in links:
+        line = f"  [{link['name']}] #{link['target_id']}"
+        if link["comment"]:
+            line += f"  ({link['comment']})"
+        click.echo(line)
+
+
+@main.command("list-comments")
+@click.argument("work_item_id", type=int)
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Data directory (default: ./.ado-search)")
+def list_comments_cmd(work_item_id, data_dir):
+    """List comments on an Azure DevOps work item (live from ADO)."""
+    conn = _load_conn(data_dir)
+
+    from ado_search.auth import OP_COMMENTS
+    from ado_search.runner import fetch_and_parse
+    from ado_search.markdown import strip_html
+
+    data = asyncio.run(fetch_and_parse(
+        conn.auth_method, OP_COMMENTS, f"comments for #{work_item_id}",
+        org=conn.org, project=conn.project, pat=conn.pat,
+        work_item_id=work_item_id,
+    ))
+
+    if isinstance(data, str):
+        click.echo(f"Error: {data}", err=True)
+        raise SystemExit(1)
+
+    comments = data.get("comments", [])
+
+    if not comments:
+        click.echo(f"No comments on work item #{work_item_id}")
+        return
+
+    click.echo(f"Comments on work item #{work_item_id} ({len(comments)}):")
+    for c in comments:
+        author = c.get("createdBy", {}).get("displayName", "Unknown")
+        date = c.get("createdDate", "")[:10]
+        text = strip_html(c.get("text", ""))
+        click.echo(f"\n  [{date}] {author}:")
+        for line in text.split("\n"):
+            click.echo(f"    {line}")

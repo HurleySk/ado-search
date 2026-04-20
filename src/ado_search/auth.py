@@ -20,6 +20,7 @@ OP_ATTACHMENT = "attachment"
 OP_CREATE = "create"
 OP_UPDATE = "update"
 OP_ADD_COMMENT = "add-comment"
+OP_ADD_LINK = "add-link"
 
 
 @dataclass
@@ -167,6 +168,12 @@ OPERATIONS: dict[str, OperationDef] = {
         method="POST",
         path="{url_project}/_apis/wit/workitems/{work_item_id}/comments",
         query_params=["api-version=7.1-preview.4"],
+        has_body=True,
+    ),
+    OP_ADD_LINK: OperationDef(
+        method="PATCH",
+        path="{url_project}/_apis/wit/workitems/{work_item_id}",
+        query_params=["api-version=7.1"],
         has_body=True,
     ),
 }

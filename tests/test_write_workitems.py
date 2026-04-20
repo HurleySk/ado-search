@@ -8,6 +8,7 @@ import pytest
 
 from ado_search.write_workitems import (
     add_comment,
+    add_link,
     build_az_fields,
     build_json_patch,
     resolve_fields,
@@ -15,6 +16,7 @@ from ado_search.write_workitems import (
     create_work_item,
     update_work_item,
     FIELD_MAP,
+    LINK_TYPE_MAP,
 )
 
 
@@ -314,3 +316,109 @@ def test_add_comment_pat(tmp_path):
     body = json.loads(call_kwargs.kwargs.get("body"))
     assert body["text"] == "<p>Nice work!</p>"
     assert result["id"] == 12345
+
+
+# ── LINK_TYPE_MAP tests ───────────────────────────────────────────
+
+
+def test_link_type_map_has_expected_entries():
+    assert LINK_TYPE_MAP["related"] == "System.LinkTypes.Related"
+    assert LINK_TYPE_MAP["parent"] == "System.LinkTypes.Hierarchy-Reverse"
+    assert LINK_TYPE_MAP["child"] == "System.LinkTypes.Hierarchy-Forward"
+    assert LINK_TYPE_MAP["depends-on"] == "System.LinkTypes.Dependency-Forward"
+    assert LINK_TYPE_MAP["predecessor"] == "System.LinkTypes.Dependency-Reverse"
+    assert LINK_TYPE_MAP["duplicate"] == "System.LinkTypes.Duplicate-Forward"
+    assert LINK_TYPE_MAP["duplicate-of"] == "System.LinkTypes.Duplicate-Reverse"
+
+
+def test_link_type_map_falls_through_raw_type():
+    raw = "System.LinkTypes.Custom"
+    assert LINK_TYPE_MAP.get(raw, raw) == raw
+
+
+# ── add_link tests ────────────────────────────────────────────────
+
+
+def test_add_link_dry_run(tmp_path):
+    """Dry run should not call run_operation."""
+    with patch("ado_search.write_workitems.run_operation", new_callable=AsyncMock) as mock_op:
+        result = asyncio.run(add_link(
+            org="https://dev.azure.com/co", project="P",
+            auth_method="pat", pat="fake",
+            data_dir=tmp_path,
+            source_id=100, target_id=200,
+            link_type="related", dry_run=True,
+        ))
+    mock_op.assert_not_called()
+    assert result == {}
+
+
+def test_add_link_pat(tmp_path):
+    """PAT auth should send JSON Patch body with relation operation."""
+    api_response = {"id": 100, "relations": []}
+    mock_result = _make_command_result(api_response)
+    record = _make_record(item_id=100)
+
+    with patch("ado_search.write_workitems.run_operation", new_callable=AsyncMock, return_value=mock_result) as mock_op, \
+         patch("ado_search.write_workitems._refetch_and_merge", new_callable=AsyncMock, return_value=record):
+
+        result = asyncio.run(add_link(
+            org="https://dev.azure.com/co", project="P",
+            auth_method="pat", pat="fake",
+            data_dir=tmp_path,
+            source_id=100, target_id=200,
+            link_type="parent", comment="linking parent",
+        ))
+
+    call_kwargs = mock_op.call_args
+    assert call_kwargs.kwargs.get("content_type") == "application/json-patch+json"
+    body = json.loads(call_kwargs.kwargs.get("body"))
+    assert len(body) == 1
+    assert body[0]["op"] == "add"
+    assert body[0]["path"] == "/relations/-"
+    assert body[0]["value"]["rel"] == "System.LinkTypes.Hierarchy-Reverse"
+    assert "200" in body[0]["value"]["url"]
+    assert body[0]["value"]["attributes"]["comment"] == "linking parent"
+    assert result["id"] == 100
+
+
+def test_add_link_resolves_friendly_name(tmp_path):
+    """Friendly link type names should map to ADO relation types."""
+    api_response = {"id": 100, "relations": []}
+    mock_result = _make_command_result(api_response)
+    record = _make_record(item_id=100)
+
+    with patch("ado_search.write_workitems.run_operation", new_callable=AsyncMock, return_value=mock_result) as mock_op, \
+         patch("ado_search.write_workitems._refetch_and_merge", new_callable=AsyncMock, return_value=record):
+
+        asyncio.run(add_link(
+            org="https://dev.azure.com/co", project="P",
+            auth_method="pat", pat="fake",
+            data_dir=tmp_path,
+            source_id=100, target_id=200,
+            link_type="child",
+        ))
+
+    body = json.loads(mock_op.call_args.kwargs["body"])
+    assert body[0]["value"]["rel"] == "System.LinkTypes.Hierarchy-Forward"
+
+
+def test_add_link_raw_type_passthrough(tmp_path):
+    """Unrecognized link types should be passed through as-is."""
+    api_response = {"id": 100}
+    mock_result = _make_command_result(api_response)
+    record = _make_record(item_id=100)
+
+    with patch("ado_search.write_workitems.run_operation", new_callable=AsyncMock, return_value=mock_result) as mock_op, \
+         patch("ado_search.write_workitems._refetch_and_merge", new_callable=AsyncMock, return_value=record):
+
+        asyncio.run(add_link(
+            org="https://dev.azure.com/co", project="P",
+            auth_method="pat", pat="fake",
+            data_dir=tmp_path,
+            source_id=100, target_id=200,
+            link_type="System.LinkTypes.Custom",
+        ))
+
+    body = json.loads(mock_op.call_args.kwargs["body"])
+    assert body[0]["value"]["rel"] == "System.LinkTypes.Custom"

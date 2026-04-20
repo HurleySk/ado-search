@@ -75,6 +75,9 @@ Note: attachments require the WIQL/REST sync path (OData doesn't include relatio
 | `ado-search create` | Create a new work item |
 | `ado-search update <id>` | Update an existing work item |
 | `ado-search add-comment <id> <text>` | Add a comment to a work item |
+| `ado-search add-link <source> <target>` | Add a link between two work items |
+| `ado-search list-links <id>` | List links on a work item (live) |
+| `ado-search list-comments <id>` | List comments on a work item (live) |
 
 ## Create & Update
 
@@ -124,7 +127,32 @@ ado-search add-comment 12345 "<p>Looks good!</p>"
 ado-search update 12345 --description "@@mention is not a file reference"
 ```
 
-After create/update/add-comment, the item is automatically re-fetched and merged into the local JSONL store so it appears in search immediately.
+After create/update/add-comment/add-link, the item is automatically re-fetched and merged into the local JSONL store so it appears in search immediately.
+
+## Links
+
+```bash
+# Add a parent link
+ado-search add-link 12345 67890 --type parent
+
+# Add a related link with a comment
+ado-search add-link 12345 67891 --type related --comment "See also this item"
+
+# Link types: related, parent, child, duplicate, duplicate-of, depends-on, predecessor, successor
+ado-search add-link 12345 67892 --type depends-on
+
+# Use a raw ADO relation type
+ado-search add-link 12345 67893 --type "System.LinkTypes.Related"
+
+# Preview without creating
+ado-search add-link 12345 67890 --type child --dry-run
+
+# List all links on a work item (live from ADO)
+ado-search list-links 12345
+
+# List all comments on a work item (live from ADO)
+ado-search list-comments 12345
+```
 
 ## Configuration
 

@@ -105,6 +105,19 @@ class Database:
             pass
         conn.commit()
 
+    def _upsert_fts(self, conn: sqlite3.Connection, item_type: str, item_id: str,
+                    title: str, snippet: str, tags: str) -> None:
+        if not self._skip_fts_delete:
+            conn.execute(
+                "DELETE FROM search_index WHERE item_type = ? AND item_id = ?",
+                (item_type, item_id),
+            )
+        conn.execute(
+            "INSERT INTO search_index (item_type, item_id, title, description_snippet, tags) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (item_type, item_id, title, snippet, tags),
+        )
+
     def upsert_work_item(self, item: dict) -> None:
         conn = self._connect()
         conn.execute(
@@ -132,15 +145,8 @@ class Database:
                 item.get("story_points"),
             ),
         )
-        if not self._skip_fts_delete:
-            conn.execute(
-                "DELETE FROM search_index WHERE item_type = 'work_item' AND item_id = ?",
-                (str(item["id"]),),
-            )
-        conn.execute(
-            "INSERT INTO search_index (item_type, item_id, title, description_snippet, tags) VALUES (?, ?, ?, ?, ?)",
-            ("work_item", str(item["id"]), item["title"], item.get("description_snippet", ""), item["tags"]),
-        )
+        self._upsert_fts(conn, "work_item", str(item["id"]),
+                         item["title"], item.get("description_snippet", ""), item["tags"])
         if not self._in_batch:
             conn.commit()
 
@@ -155,15 +161,8 @@ class Database:
             """,
             (page["path"], page["title"], page["updated"], page.get("content", "")),
         )
-        if not self._skip_fts_delete:
-            conn.execute(
-                "DELETE FROM search_index WHERE item_type = 'wiki' AND item_id = ?",
-                (page["path"],),
-            )
-        conn.execute(
-            "INSERT INTO search_index (item_type, item_id, title, description_snippet, tags) VALUES (?, ?, ?, ?, ?)",
-            ("wiki", page["path"], page["title"], page.get("description_snippet", ""), ""),
-        )
+        self._upsert_fts(conn, "wiki", page["path"],
+                         page["title"], page.get("description_snippet", ""), "")
         if not self._in_batch:
             conn.commit()
 

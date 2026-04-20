@@ -7,7 +7,7 @@ from typing import Any
 
 import click
 
-from ado_search.auth import OP_ADD_COMMENT, OP_CREATE, OP_UPDATE
+from ado_search.auth import OP_ADD_COMMENT, OP_ADD_LINK, OP_CREATE, OP_UPDATE
 from ado_search.runner import run_operation
 from ado_search.sync_common import finalize_jsonl
 
@@ -46,6 +46,23 @@ FIELD_MAP = {
     "priority":            "Microsoft.VSTS.Common.Priority",
     "story_points":        "Microsoft.VSTS.Scheduling.StoryPoints",
 }
+
+
+LINK_TYPE_MAP: dict[str, str] = {
+    "related":      "System.LinkTypes.Related",
+    "parent":       "System.LinkTypes.Hierarchy-Reverse",
+    "child":        "System.LinkTypes.Hierarchy-Forward",
+    "duplicate":    "System.LinkTypes.Duplicate-Forward",
+    "duplicate-of": "System.LinkTypes.Duplicate-Reverse",
+    "depends-on":   "System.LinkTypes.Dependency-Forward",
+    "successor":    "System.LinkTypes.Dependency-Forward",
+    "predecessor":  "System.LinkTypes.Dependency-Reverse",
+}
+
+
+def _build_link_url(org: str, project: str, target_id: int) -> str:
+    """Build the ADO REST API URL for a target work item (used in relation payloads)."""
+    return f"{org}/{project}/_apis/wit/workItems/{target_id}"
 
 
 def build_json_patch(fields: dict[str, Any]) -> list[dict]:
@@ -159,16 +176,10 @@ async def create_work_item(
             content_type="application/json-patch+json",
         )
 
-    if result.returncode != 0:
-        click.echo(f"Error creating work item: {result.stderr}", err=True)
-        raise SystemExit(1)
-
-    response = result.parse_json()
-    item_id = response["id"]
-
-    # Re-fetch through the standard pipeline for full normalization
-    return await _refetch_and_merge(item_id, org=org, project=project,
-                                    auth_method=auth_method, pat=pat, data_dir=data_dir)
+    item_id = result.parse_json()["id"] if result.returncode == 0 else 0
+    return await _check_and_refetch(result, "creating work item", item_id,
+                                    org=org, project=project, auth_method=auth_method,
+                                    pat=pat, data_dir=data_dir)
 
 
 async def update_work_item(
@@ -219,12 +230,8 @@ async def update_work_item(
             content_type="application/json-patch+json",
         )
 
-    if result.returncode != 0:
-        click.echo(f"Error updating work item #{work_item_id}: {result.stderr}", err=True)
-        raise SystemExit(1)
-
-    # Re-fetch through the standard pipeline for full normalization
-    return await _refetch_and_merge(work_item_id, org=org, project=project,
+    return await _check_and_refetch(result, f"updating work item #{work_item_id}",
+                                    work_item_id, org=org, project=project,
                                     auth_method=auth_method, pat=pat, data_dir=data_dir)
 
 
@@ -258,11 +265,80 @@ async def add_comment(
         content_type="application/json",
     )
 
-    if result.returncode != 0:
-        click.echo(f"Error adding comment to #{work_item_id}: {result.stderr}", err=True)
-        raise SystemExit(1)
+    return await _check_and_refetch(result, f"adding comment to #{work_item_id}",
+                                    work_item_id, org=org, project=project,
+                                    auth_method=auth_method, pat=pat, data_dir=data_dir)
 
-    return await _refetch_and_merge(work_item_id, org=org, project=project,
+
+async def add_link(
+    *,
+    org: str,
+    project: str,
+    auth_method: str,
+    pat: str = "",
+    data_dir: Path,
+    source_id: int,
+    target_id: int,
+    link_type: str,
+    comment: str | None = None,
+    dry_run: bool = False,
+) -> dict:
+    """Add a link between two ADO work items and refresh local JSONL store.
+
+    link_type can be a friendly name (e.g. 'related', 'parent', 'child')
+    or a raw ADO relation type string (e.g. 'System.LinkTypes.Related').
+
+    Returns the normalized JSONL record for the source work item.
+    """
+    rel_type = LINK_TYPE_MAP.get(link_type.lower(), link_type)
+
+    if dry_run:
+        click.echo(f"Would add '{rel_type}' link from #{source_id} to #{target_id}")
+        if comment:
+            click.echo(f"  Comment: {comment}")
+        return {}
+
+    target_url = _build_link_url(org, project, target_id)
+    value: dict[str, Any] = {
+        "rel": rel_type,
+        "url": target_url,
+        "attributes": {},
+    }
+    if comment:
+        value["attributes"]["comment"] = comment
+
+    patch = [{"op": "add", "path": "/relations/-", "value": value}]
+    body = json.dumps(patch)
+
+    result = await run_operation(
+        auth_method, OP_ADD_LINK,
+        org=org, project=project, pat=pat,
+        work_item_id=source_id,
+        body=body,
+        content_type="application/json-patch+json",
+    )
+
+    return await _check_and_refetch(result, f"adding link from #{source_id} to #{target_id}",
+                                    source_id, org=org, project=project,
+                                    auth_method=auth_method, pat=pat, data_dir=data_dir)
+
+
+async def _check_and_refetch(
+    result: "CommandResult",
+    error_label: str,
+    item_id: int,
+    *,
+    org: str,
+    project: str,
+    auth_method: str,
+    pat: str,
+    data_dir: Path,
+) -> dict:
+    """Check command result for errors, then refetch and merge into JSONL."""
+    if result.returncode != 0:
+        click.echo(f"Error {error_label}: {result.stderr}", err=True)
+        raise SystemExit(1)
+    return await _refetch_and_merge(item_id, org=org, project=project,
                                     auth_method=auth_method, pat=pat, data_dir=data_dir)
 
 

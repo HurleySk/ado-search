@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0] — 2026-04-20
+
+### Added
+
+- **`ado-search add-link <source> <target> --type <type>`** — create a link between two work items. Supports friendly type names (`related`, `parent`, `child`, `duplicate`, `duplicate-of`, `depends-on`, `predecessor`, `successor`) or raw ADO relation type strings. Supports `--comment` and `--dry-run`.
+- **`ado-search list-links <id>`** — fetch and display work item links live from Azure DevOps. Shows link type name and target work item ID for each relation (excludes attachments, hyperlinks, and artifact links).
+- **`ado-search list-comments <id>`** — fetch and display work item comments live from Azure DevOps. Shows author, date, and plain-text body for each comment without requiring a prior sync with `include_comments`.
+
+### Changed
+
+- Internal refactoring: extracted shared helpers (`_check_and_refetch`, `_open_db`, `_upsert_fts`) to reduce code duplication across CLI commands, write operations, and database indexing. No behavior changes.
+
 ## [1.1.0] — 2026-04-20
 
 ### Added

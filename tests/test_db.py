@@ -364,6 +364,68 @@ def test_reindex_from_jsonl(tmp_path):
     db.close()
 
 
+def test_get_filtered_ids_no_filters(tmp_path):
+    db = Database(tmp_path / "index.db")
+    db.initialize()
+    for wid in [10, 20, 30]:
+        db.upsert_work_item({
+            "id": wid, "title": f"Item {wid}", "type": "Bug", "state": "Active",
+            "area": "Proj\\Team", "iteration": "", "assigned_to": "a@co.com",
+            "tags": "t1", "priority": 2, "parent_id": None,
+            "created": "2026-01-01", "updated": "2026-01-01",
+            "description_snippet": f"desc {wid}",
+        })
+    ids = db.get_filtered_ids()
+    assert ids is None  # None means "no filters, scan all"
+    db.close()
+
+
+def test_get_filtered_ids_with_type(tmp_path):
+    db = Database(tmp_path / "index.db")
+    db.initialize()
+    db.upsert_work_item({
+        "id": 1, "title": "Bug item", "type": "Bug", "state": "Active",
+        "area": "", "iteration": "", "assigned_to": "", "tags": "",
+        "priority": 1, "parent_id": None, "created": "2026-01-01",
+        "updated": "2026-01-01", "description_snippet": "desc",
+    })
+    db.upsert_work_item({
+        "id": 2, "title": "Story item", "type": "User Story", "state": "Active",
+        "area": "", "iteration": "", "assigned_to": "", "tags": "",
+        "priority": 2, "parent_id": None, "created": "2026-01-01",
+        "updated": "2026-01-01", "description_snippet": "desc",
+    })
+    ids = db.get_filtered_ids(type_filter="Bug")
+    assert ids == {1}
+    db.close()
+
+
+def test_get_filtered_ids_with_multiple_filters(tmp_path):
+    db = Database(tmp_path / "index.db")
+    db.initialize()
+    db.upsert_work_item({
+        "id": 1, "title": "Bug A", "type": "Bug", "state": "Active",
+        "area": "Proj\\Auth", "iteration": "", "assigned_to": "alice@co.com",
+        "tags": "auth,p1", "priority": 1, "parent_id": None,
+        "created": "2026-01-01", "updated": "2026-01-01",
+        "description_snippet": "desc",
+    })
+    db.upsert_work_item({
+        "id": 2, "title": "Bug B", "type": "Bug", "state": "Closed",
+        "area": "Proj\\Auth", "iteration": "", "assigned_to": "bob@co.com",
+        "tags": "auth", "priority": 2, "parent_id": None,
+        "created": "2026-01-01", "updated": "2026-01-01",
+        "description_snippet": "desc",
+    })
+    ids = db.get_filtered_ids(type_filter="Bug", state_filter="Active")
+    assert ids == {1}
+    ids = db.get_filtered_ids(area_filter="Proj\\Auth")
+    assert ids == {1, 2}
+    ids = db.get_filtered_ids(tag_filter="p1")
+    assert ids == {1}
+    db.close()
+
+
 def test_reindex_includes_attachment_filenames_in_search(tmp_path):
     import json
     db = Database(tmp_path / "index.db")

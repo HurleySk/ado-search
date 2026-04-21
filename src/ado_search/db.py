@@ -295,6 +295,42 @@ class Database:
         rows = conn.execute("SELECT id FROM work_items").fetchall()
         return [row["id"] for row in rows]
 
+    def get_filtered_ids(
+        self,
+        *,
+        type_filter: str | None = None,
+        state_filter: str | None = None,
+        area_filter: str | None = None,
+        assigned_to_filter: str | None = None,
+        tag_filter: str | None = None,
+    ) -> set[int] | None:
+        """Return IDs matching metadata filters, or None if no filters given."""
+        if not any([type_filter, state_filter, area_filter, assigned_to_filter, tag_filter]):
+            return None
+
+        conn = self._connect()
+        sql = "SELECT id FROM work_items WHERE 1=1"
+        params: list = []
+
+        if type_filter:
+            sql += " AND type = ?"
+            params.append(type_filter)
+        if state_filter:
+            sql += " AND state = ?"
+            params.append(state_filter)
+        if area_filter:
+            sql += " AND area LIKE ?"
+            params.append(f"{area_filter}%")
+        if assigned_to_filter:
+            sql += " AND assigned_to = ?"
+            params.append(assigned_to_filter)
+        if tag_filter:
+            sql += " AND (',' || tags || ',') LIKE ?"
+            params.append(f"%,{tag_filter},%")
+
+        rows = conn.execute(sql, params).fetchall()
+        return {row["id"] for row in rows}
+
     def get_all_wiki_paths(self) -> list[str]:
         conn = self._connect()
         rows = conn.execute("SELECT path FROM wiki_pages").fetchall()

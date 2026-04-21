@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.0] — 2026-04-21
+
+### Changed
+
+- **SQLite indexes on filter columns** — `search` queries that filter by type, state, area, or assigned-to now hit B-tree indexes instead of full-table scans. Speeds up filtered searches on large datasets.
+- **Batch state change inserts** — `upsert_state_changes()` uses `executemany()` instead of per-row `execute()` calls, reducing SQLite round-trips during sync.
+- **Skip redundant deletes during reindex** — full reindex no longer issues per-item `DELETE FROM work_item_state_changes` after the table has already been cleared. Mirrors the existing `_skip_fts_delete` optimization.
+- **Parallel attachment downloads** — file attachments and inline images are now downloaded concurrently with `asyncio.gather()` instead of sequentially, bounded by the existing semaphore.
+- **Single semaphore acquire per work item fetch** — `fetch_item()` now holds the concurrency semaphore once for the show + updates/comments calls instead of acquiring it twice with a gap between.
+- **Exponential ID range probing** — `_find_id_range_start()` uses exponential probing + binary search instead of linear 10K-chunk scanning. Reduces worst-case API calls from ~20 to ~8 for projects with high starting work item IDs.
+
 ## [1.2.0] — 2026-04-20
 
 ### Added

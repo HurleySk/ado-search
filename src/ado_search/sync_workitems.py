@@ -98,9 +98,8 @@ async def fetch_item(
         if isinstance(raw, str):
             return raw
 
-    comments = []
-    updates = []
-    async with semaphore:
+        comments = []
+        updates = []
         coros = [_fetch_updates(item_id, auth_method, org, project, pat=pat)]
         if include_comments:
             coros.append(_fetch_comments(item_id, auth_method, org, project, pat=pat))
@@ -193,17 +192,47 @@ async def _run_wiql(
 async def _find_id_range_start(
     auth_method: str, org: str, project: str, pat: str, **query_kwargs,
 ) -> int | None:
-    """Probe ID ranges to find the first work items. Returns min ID or None."""
-    for probe_start in range(0, 200000, ID_CHUNK_SIZE):
+    """Probe ID ranges to find the first work items. Returns min ID or None.
+
+    Uses exponential probing (10K, 20K, 40K, …) to find the ceiling, then
+    binary search within the found range. Reduces worst-case from 20 probes
+    to ~8 for projects with high starting IDs.
+    """
+    # Exponential probe: find first ceiling where items exist
+    ceiling = ID_CHUNK_SIZE
+    found_ceiling = None
+    while ceiling <= 200000:
         rc, data = await _run_wiql(
             auth_method, org, project, pat,
-            **query_kwargs, min_id=probe_start, max_id=probe_start + ID_CHUNK_SIZE,
+            **query_kwargs, min_id=0, max_id=ceiling,
         )
         if rc == 0 and data:
-            range_start = min(data)
-            click.echo(f"  First items found at ID ~{range_start}")
-            return range_start
-    return None
+            found_ceiling = ceiling
+            break
+        ceiling *= 2
+
+    if found_ceiling is None:
+        return None
+
+    # Binary search within [0, ceiling] for the tightest chunk containing items
+    lo, hi = 0, found_ceiling
+    best_start = min(data)
+    while hi - lo > ID_CHUNK_SIZE:
+        mid = ((lo + hi) // 2 // ID_CHUNK_SIZE) * ID_CHUNK_SIZE
+        if mid <= lo:
+            break
+        rc, data = await _run_wiql(
+            auth_method, org, project, pat,
+            **query_kwargs, min_id=0, max_id=mid,
+        )
+        if rc == 0 and data:
+            best_start = min(best_start, min(data))
+            hi = mid
+        else:
+            lo = mid
+
+    click.echo(f"  First items found at ID ~{best_start}")
+    return best_start
 
 
 async def _paginate_by_id_range(

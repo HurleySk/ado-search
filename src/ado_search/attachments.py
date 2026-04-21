@@ -104,29 +104,35 @@ async def download_work_item_attachments(
 
     base = data_dir / "attachments" / str(work_item_id)
     seen_names: set[str] = set()
-    results = []
 
+    # Step 1: compute filenames sequentially (stateful dedup)
+    plan: list[tuple[dict, str, Path, str]] = []
     for att in attachments:
         filename = _safe_filename(att["name"], att["guid"], seen_names)
         dest = base / filename
         rel_path = f"attachments/{work_item_id}/{filename}"
+        plan.append((att, filename, dest, rel_path))
 
+    # Step 2: download in parallel
+    async def _download_one(att: dict, dest: Path) -> str | None:
+        if dest.exists() and att["size"] and dest.stat().st_size == att["size"]:
+            return None
+        return await download_binary(
+            auth_method, url=att["url"], dest_path=dest,
+            org=org, pat=pat, semaphore=semaphore,
+        )
+
+    errors = await asyncio.gather(*[_download_one(att, dest) for att, _, dest, _ in plan])
+
+    # Step 3: assemble results
+    results = []
+    for (att, _, _, rel_path), err in zip(plan, errors):
         record = {
             "name": att["name"],
             "size": att["size"],
             "guid": att["guid"],
             "local_path": rel_path,
         }
-
-        # Skip if already downloaded with correct size
-        if dest.exists() and att["size"] and dest.stat().st_size == att["size"]:
-            results.append(record)
-            continue
-
-        err = await download_binary(
-            auth_method, url=att["url"], dest_path=dest,
-            org=org, pat=pat, semaphore=semaphore,
-        )
         if err:
             record["download_error"] = err
         results.append(record)
@@ -152,28 +158,29 @@ async def download_work_item_inline_images(
         return {}, []
 
     base = data_dir / "attachments" / str(work_item_id) / "inline"
-    image_map: dict[str, str] = {}
-    metadata: list[dict] = []
 
+    # Build plan and download in parallel
+    plan = []
     for img in images:
         filename = f"{img['guid']}.png"
         dest = base / filename
         rel_path = f"attachments/{work_item_id}/inline/{filename}"
+        plan.append((img, dest, rel_path))
 
-        # Skip if already downloaded
+    async def _download_one(img: dict, dest: Path) -> str | None:
         if dest.exists():
-            image_map[img["url"]] = rel_path
-            metadata.append({
-                "guid": img["guid"],
-                "local_path": rel_path,
-                "source_field": source_field,
-            })
-            continue
-
-        err = await download_binary(
+            return None
+        return await download_binary(
             auth_method, url=img["url"], dest_path=dest,
             org=org, pat=pat, semaphore=semaphore,
         )
+
+    errors = await asyncio.gather(*[_download_one(img, dest) for img, dest, _ in plan])
+
+    # Assemble results
+    image_map: dict[str, str] = {}
+    metadata: list[dict] = []
+    for (img, _, rel_path), err in zip(plan, errors):
         if not err:
             image_map[img["url"]] = rel_path
         metadata.append({

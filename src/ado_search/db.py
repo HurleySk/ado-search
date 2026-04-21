@@ -21,6 +21,7 @@ class Database:
         self._conn: sqlite3.Connection | None = None
         self._in_batch: bool = False
         self._skip_fts_delete: bool = False
+        self._skip_state_delete: bool = False
 
     def _connect(self) -> sqlite3.Connection:
         if self._conn is None:
@@ -89,6 +90,12 @@ class Database:
                 changed_by TEXT,
                 PRIMARY KEY (item_id, changed_date, to_state)
             );
+        """)
+        conn.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_work_items_type ON work_items(type);
+            CREATE INDEX IF NOT EXISTS idx_work_items_state ON work_items(state);
+            CREATE INDEX IF NOT EXISTS idx_work_items_area ON work_items(area);
+            CREATE INDEX IF NOT EXISTS idx_work_items_assigned_to ON work_items(assigned_to);
         """)
         for col, col_type, default in [
             ("description", "TEXT", "''"),
@@ -316,6 +323,7 @@ class Database:
         conn.commit()
 
         self._skip_fts_delete = True
+        self._skip_state_delete = True
         try:
             with self.batch():
                 for item in iter_jsonl(work_items_path):
@@ -334,16 +342,18 @@ class Database:
                     self.upsert_wiki_page(page)
         finally:
             self._skip_fts_delete = False
+            self._skip_state_delete = False
 
     def upsert_state_changes(self, item_id: int, changes: list[dict]) -> None:
         conn = self._connect()
-        conn.execute("DELETE FROM work_item_state_changes WHERE item_id = ?", (item_id,))
-        for c in changes:
-            conn.execute(
+        if not self._skip_state_delete:
+            conn.execute("DELETE FROM work_item_state_changes WHERE item_id = ?", (item_id,))
+        if changes:
+            conn.executemany(
                 """INSERT OR REPLACE INTO work_item_state_changes
                    (item_id, from_state, to_state, changed_date, changed_by)
                    VALUES (?, ?, ?, ?, ?)""",
-                (item_id, c["from"], c["to"], c["date"], c.get("by", "")),
+                [(item_id, c["from"], c["to"], c["date"], c.get("by", "")) for c in changes],
             )
         if not self._in_batch:
             conn.commit()

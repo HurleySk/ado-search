@@ -78,6 +78,7 @@ Note: attachments require the WIQL/REST sync path (OData doesn't include relatio
 | `ado-search add-link <source> <target>` | Add a link between two work items |
 | `ado-search list-links <id>` | List links on a work item (live) |
 | `ado-search list-comments <id>` | List comments on a work item (live) |
+| `ado-search grep "pattern"` | Regex search across work item fields |
 
 ## Create & Update
 
@@ -188,6 +189,28 @@ ado-search search "query" --format json             # machine-readable
 ado-search search "query" --format paths            # file paths only (for agent piping)
 ado-search search "query" --type Bug --state Active # filtered
 ```
+
+## Grep — Regex Pattern Matching
+
+Search work items with regex patterns across fields:
+
+```bash
+# Find IP addresses anywhere in title/description/comments
+ado-search grep '\d+\.\d+\.\d+\.\d+'
+
+# Find "deprecated" only in comments, case-insensitive
+ado-search grep -i 'deprecated' -f comments
+
+# Find URL patterns in active bugs, brief output
+ado-search grep 'https?://\S+' --type Bug --state Active --brief
+
+# JSON output for scripting
+ado-search grep 'TODO|FIXME' --format json
+```
+
+Default fields searched: title, description, comments. Use `--field` / `-f` to scope to specific fields (`title`, `description`, `acceptance_criteria`, `comments`, `tags`, `assigned_to`, `area`, `iteration`, `state_history`).
+
+Metadata pre-filters (`--type`, `--state`, `--area`, `--assigned-to`, `--tag`) narrow candidates via SQLite indexes before the regex scan. Exit codes follow grep convention: 0 = matches found, 1 = no matches, 2 = error.
 
 ## Prerequisites
 

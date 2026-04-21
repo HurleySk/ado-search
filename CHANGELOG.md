@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.0] — 2026-04-21
+
+### Added
+
+- **`ado-search grep <pattern>`** — regex pattern matching across work item fields. Searches title, full description, and comments by default. Supports `--field` scoping to any combination of fields, metadata pre-filters (`--type`, `--state`, `--area`, `--assigned-to`, `--tag`), case-insensitive matching (`-i`), configurable context window (`-C`), and result limit (`-n`).
+- **Three output formats for grep:** compact (default, shows context snippets around matches), brief (`--brief`, shows only item IDs and matched field names), and JSON (`--format json`, structured output for scripting).
+- **Exit codes follow grep convention:** 0 for matches found, 1 for no matches, 2 for errors.
+
 ## [1.3.0] — 2026-04-21
 
 ### Changed

@@ -1,6 +1,8 @@
+import json
 import re
+from pathlib import Path
 
-from ado_search.grep import extract_field_text, match_field, FieldMatch, GrepResult
+from ado_search.grep import extract_field_text, match_field, FieldMatch, GrepResult, grep_work_items
 
 
 def test_extract_title():
@@ -109,3 +111,122 @@ def test_match_field_with_comment_metadata():
     assert len(matches) == 1
     assert matches[0].comment_author == "jdoe"
     assert matches[0].comment_date == "2026-03-20"
+
+
+# ---------------------------------------------------------------------------
+# grep_work_items tests
+# ---------------------------------------------------------------------------
+
+def _write_test_jsonl(path: Path) -> None:
+    items = [
+        {
+            "id": 100, "title": "Login fails with IP 10.0.0.1",
+            "type": "Bug", "state": "Active",
+            "area": "Proj\\Auth", "iteration": "Sprint 1",
+            "assigned_to": "alice@co.com", "tags": "auth,sso",
+            "priority": 1, "parent_id": None,
+            "created": "2026-01-01", "updated": "2026-01-15",
+            "description": "The server at 10.0.0.1 rejects SSO requests. Fallback to 10.0.0.2 also fails.",
+            "acceptance_criteria": "SSO must work",
+            "comments": [
+                {"author": "Bob", "date": "2026-01-16", "text": "Confirmed 10.0.0.1 is blocked."},
+            ],
+        },
+        {
+            "id": 200, "title": "Add MFA support",
+            "type": "User Story", "state": "New",
+            "area": "Proj\\Auth", "iteration": "Sprint 2",
+            "assigned_to": "bob@co.com", "tags": "mfa",
+            "priority": 2, "parent_id": None,
+            "created": "2026-02-01", "updated": "2026-02-10",
+            "description": "Users want multi-factor authentication.",
+            "acceptance_criteria": "",
+        },
+    ]
+    with path.open("w", encoding="utf-8") as f:
+        for item in items:
+            f.write(json.dumps(item) + "\n")
+
+
+def test_grep_finds_ip_pattern(tmp_path):
+    jsonl_path = tmp_path / "work-items.jsonl"
+    _write_test_jsonl(jsonl_path)
+    results, warnings = grep_work_items(
+        jsonl_path=jsonl_path,
+        pattern=re.compile(r"\d+\.\d+\.\d+\.\d+"),
+        fields=["title", "description", "comments"],
+    )
+    assert len(results) == 1
+    assert results[0].item_id == 100
+    # title has 1 match, description has 2, comments has 1 = 4 total
+    assert len(results[0].matches) == 4
+    field_names = [m.field for m in results[0].matches]
+    assert "title" in field_names
+    assert "description" in field_names
+    assert "comments" in field_names
+
+
+def test_grep_field_scoping(tmp_path):
+    jsonl_path = tmp_path / "work-items.jsonl"
+    _write_test_jsonl(jsonl_path)
+    results, _ = grep_work_items(
+        jsonl_path=jsonl_path,
+        pattern=re.compile(r"\d+\.\d+\.\d+\.\d+"),
+        fields=["comments"],
+    )
+    assert len(results) == 1
+    assert all(m.field == "comments" for m in results[0].matches)
+
+
+def test_grep_no_matches(tmp_path):
+    jsonl_path = tmp_path / "work-items.jsonl"
+    _write_test_jsonl(jsonl_path)
+    results, _ = grep_work_items(
+        jsonl_path=jsonl_path,
+        pattern=re.compile(r"zzzznotfound"),
+        fields=["title", "description", "comments"],
+    )
+    assert results == []
+
+
+def test_grep_with_candidate_ids(tmp_path):
+    jsonl_path = tmp_path / "work-items.jsonl"
+    _write_test_jsonl(jsonl_path)
+    results, _ = grep_work_items(
+        jsonl_path=jsonl_path,
+        pattern=re.compile(r".*", re.DOTALL),
+        fields=["title"],
+        candidate_ids={200},
+    )
+    assert len(results) == 1
+    assert results[0].item_id == 200
+
+
+def test_grep_limit(tmp_path):
+    jsonl_path = tmp_path / "work-items.jsonl"
+    _write_test_jsonl(jsonl_path)
+    results, _ = grep_work_items(
+        jsonl_path=jsonl_path,
+        pattern=re.compile(r".*", re.DOTALL),
+        fields=["title"],
+        limit=1,
+    )
+    assert len(results) == 1
+
+
+def test_grep_warns_missing_comments(tmp_path):
+    jsonl_path = tmp_path / "work-items.jsonl"
+    with jsonl_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps({
+            "id": 1, "title": "No comments", "type": "Bug", "state": "Active",
+            "area": "", "iteration": "", "assigned_to": "", "tags": "",
+            "priority": 1, "parent_id": None, "created": "2026-01-01",
+            "updated": "2026-01-01", "description": "desc",
+        }) + "\n")
+    results, warnings = grep_work_items(
+        jsonl_path=jsonl_path,
+        pattern=re.compile(r"desc"),
+        fields=["title", "description", "comments"],
+    )
+    assert len(warnings) == 1
+    assert "comments" in warnings[0].lower()

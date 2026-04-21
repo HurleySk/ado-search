@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
+
+from ado_search.jsonl import iter_jsonl
 
 
 @dataclass
@@ -97,3 +100,62 @@ def match_field(
             comment_date=comment_date,
         ))
     return results
+
+
+DEFAULT_FIELDS = ["title", "description", "comments"]
+
+
+def grep_work_items(
+    *,
+    jsonl_path: Path,
+    pattern: re.Pattern,
+    fields: list[str] | None = None,
+    candidate_ids: set[int] | None = None,
+    context_chars: int = 60,
+    limit: int = 50,
+) -> tuple[list[GrepResult], list[str]]:
+    """Scan JSONL records for regex matches across specified fields.
+
+    Returns (results, warnings).
+    """
+    if fields is None:
+        fields = list(DEFAULT_FIELDS)
+
+    results: list[GrepResult] = []
+    warnings: list[str] = []
+    comments_warned = False
+
+    for item in iter_jsonl(jsonl_path):
+        item_id = item.get("id")
+        if candidate_ids is not None and item_id not in candidate_ids:
+            continue
+
+        item_matches: list[FieldMatch] = []
+
+        for field_name in fields:
+            if field_name == "comments" and "comments" not in item and not comments_warned:
+                warnings.append(
+                    "Comments not synced — run `ado-search sync --include-comments` for full results"
+                )
+                comments_warned = True
+
+            for text, author, date in extract_field_text(item, field_name):
+                item_matches.extend(match_field(
+                    pattern, field_name, text,
+                    context_chars=context_chars,
+                    comment_author=author,
+                    comment_date=date,
+                ))
+
+        if item_matches:
+            results.append(GrepResult(
+                item_id=item_id,
+                title=item.get("title", ""),
+                item_type=item.get("type", ""),
+                state=item.get("state", ""),
+                matches=item_matches,
+            ))
+            if len(results) >= limit:
+                break
+
+    return results, warnings

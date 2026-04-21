@@ -2,7 +2,7 @@ import json
 import re
 from pathlib import Path
 
-from ado_search.grep import extract_field_text, match_field, FieldMatch, GrepResult, grep_work_items
+from ado_search.grep import extract_field_text, match_field, FieldMatch, GrepResult, grep_work_items, format_grep_results
 
 
 def test_extract_title():
@@ -230,3 +230,66 @@ def test_grep_warns_missing_comments(tmp_path):
     )
     assert len(warnings) == 1
     assert "comments" in warnings[0].lower()
+
+
+# ---------------------------------------------------------------------------
+# format_grep_results tests
+# ---------------------------------------------------------------------------
+
+def _make_result():
+    return GrepResult(
+        item_id=12345,
+        title="Login fails with SSO redirect",
+        item_type="Bug",
+        state="Active",
+        matches=[
+            FieldMatch(field="description", text_matched="10.0.0.1",
+                       context="...the IP address 10.0.0.1 was rejected by the...",
+                       offset=142),
+            FieldMatch(field="comments", text_matched="10.0.0.1",
+                       context="...confirmed 10.0.0.1 is blocked in staging...",
+                       offset=31, comment_author="jdoe", comment_date="2026-03-20"),
+        ],
+    )
+
+
+def test_format_compact():
+    result = _make_result()
+    output = format_grep_results([result], fmt="compact")
+    assert "#12345" in output
+    assert "Bug" in output
+    assert "[Active]" in output
+    assert "[description]" in output
+    assert "[comment by jdoe, 2026-03-20]" in output
+    assert "1 item matched" in output
+
+
+def test_format_brief():
+    result = _make_result()
+    output = format_grep_results([result], fmt="brief")
+    assert "#12345" in output
+    assert "description" in output
+    assert "comment" in output
+    # Should NOT have context snippets
+    assert "10.0.0.1" not in output or "rejected" not in output
+
+
+def test_format_json():
+    result = _make_result()
+    output = format_grep_results([result], fmt="json")
+    parsed = json.loads(output)
+    assert len(parsed) == 1
+    assert parsed[0]["id"] == 12345
+    assert len(parsed[0]["matches"]) == 2
+    assert parsed[0]["matches"][1]["comment_author"] == "jdoe"
+
+
+def test_format_compact_summary_plural():
+    r1 = GrepResult(item_id=1, title="A", item_type="Bug", state="Active",
+                    matches=[FieldMatch("title", "x", "x", 0)])
+    r2 = GrepResult(item_id=2, title="B", item_type="Task", state="New",
+                    matches=[FieldMatch("title", "y", "y", 0),
+                             FieldMatch("description", "y", "y", 5)])
+    output = format_grep_results([r1, r2], fmt="compact")
+    assert "2 items matched" in output
+    assert "3 total matches" in output

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -159,3 +160,66 @@ def grep_work_items(
                 break
 
     return results, warnings
+
+
+def format_grep_results(results: list[GrepResult], *, fmt: str = "compact") -> str:
+    """Format grep results for display."""
+    if fmt == "json":
+        return json.dumps([
+            {
+                "id": r.item_id,
+                "title": r.title,
+                "type": r.item_type,
+                "state": r.state,
+                "matches": [
+                    {
+                        "field": m.field,
+                        "matched": m.text_matched,
+                        "context": m.context,
+                        "offset": m.offset,
+                        **({"comment_author": m.comment_author} if m.comment_author else {}),
+                        **({"comment_date": m.comment_date} if m.comment_date else {}),
+                    }
+                    for m in r.matches
+                ],
+            }
+            for r in results
+        ], indent=2)
+
+    lines: list[str] = []
+
+    for r in results:
+        header = f"#{r.item_id} {r.item_type} [{r.state}] — {r.title}"
+        lines.append(header)
+
+        if fmt == "brief":
+            field_counts: dict[str, int] = {}
+            for m in r.matches:
+                label = "comment" if m.field == "comments" else m.field
+                field_counts[label] = field_counts.get(label, 0) + 1
+            parts = []
+            for fname, count in field_counts.items():
+                parts.append(f"{fname} x{count}" if count > 1 else fname)
+            lines[-1] += f"  [{', '.join(parts)}]"
+        else:  # compact
+            for m in r.matches:
+                if m.field == "comments" and m.comment_author:
+                    label = f"[comment by {m.comment_author}, {m.comment_date}]"
+                else:
+                    label = f"[{m.field}]"
+                lines.append(f"  {label} {m.context}")
+
+        lines.append("")
+
+    total_matches = sum(len(r.matches) for r in results)
+    unique_fields = len({m.field for r in results for m in r.matches})
+    item_word = "item" if len(results) == 1 else "items"
+    if fmt == "brief":
+        lines.append(f"{len(results)} {item_word} matched")
+    else:
+        lines.append(
+            f"{len(results)} {item_word} matched "
+            f"({total_matches} total matches across {unique_fields} fields)"
+        )
+
+    return "\n".join(lines)

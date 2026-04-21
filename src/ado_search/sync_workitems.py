@@ -216,17 +216,18 @@ async def _find_id_range_start(
 
     # Binary search within [0, ceiling] for the tightest chunk containing items
     lo, hi = 0, found_ceiling
-    best_start = min(data)
+    initial_ids = data  # capture from exponential probe (truthy on break)
+    best_start = min(initial_ids)
     while hi - lo > ID_CHUNK_SIZE:
         mid = ((lo + hi) // 2 // ID_CHUNK_SIZE) * ID_CHUNK_SIZE
         if mid <= lo:
             break
-        rc, data = await _run_wiql(
+        rc, probe_ids = await _run_wiql(
             auth_method, org, project, pat,
-            **query_kwargs, min_id=0, max_id=mid,
+            **query_kwargs, min_id=lo, max_id=mid,
         )
-        if rc == 0 and data:
-            best_start = min(best_start, min(data))
+        if rc == 0 and probe_ids:
+            best_start = min(best_start, min(probe_ids))
             hi = mid
         else:
             lo = mid

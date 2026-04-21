@@ -7,7 +7,7 @@ from ado_search.db import Database
 from ado_search.jsonl import read_jsonl, write_jsonl
 from ado_search.runner import CommandResult
 from ado_search.sync_common import extract_state_history
-from ado_search.sync_workitems import sync_work_items, build_wiql_query
+from ado_search.sync_workitems import sync_work_items, build_wiql_query, _find_id_range_start
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
@@ -238,3 +238,58 @@ def test_deletion_detection_via_jsonl(tmp_path):
     assert db.get_work_item(12345) is not None
 
     db.close()
+
+
+async def test_find_id_range_start_exponential_probe():
+    """Verify exponential + binary search finds first items with fewer probes."""
+    call_count = 0
+
+    async def fake_run_wiql(auth_method, org, project, pat, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        max_id = kwargs.get("max_id", 0)
+        min_id = kwargs.get("min_id", 0)
+        # Items exist in range 75000-80000
+        ids = [i for i in range(75001, 75011) if min_id < i <= max_id]
+        return 0, ids
+
+    with patch("ado_search.sync_workitems._run_wiql", side_effect=fake_run_wiql):
+        result = await _find_id_range_start(
+            "az-cli", "https://dev.azure.com/contoso", "Proj", "",
+            work_item_types=["Bug"], area_paths=[], states=[], last_sync="",
+        )
+
+    assert result == 75001
+    # Exponential probing (10K, 20K, 40K, 80K) = 4 probes, then binary search ~3-4
+    assert call_count < 12, f"Expected fewer than 12 probes, got {call_count}"
+
+
+async def test_find_id_range_start_items_in_first_chunk():
+    """Items in the first 10K chunk should be found with minimal probes."""
+    async def fake_run_wiql(auth_method, org, project, pat, **kwargs):
+        max_id = kwargs.get("max_id", 0)
+        min_id = kwargs.get("min_id", 0)
+        ids = [i for i in [100, 200, 500] if min_id < i <= max_id]
+        return 0, ids
+
+    with patch("ado_search.sync_workitems._run_wiql", side_effect=fake_run_wiql):
+        result = await _find_id_range_start(
+            "az-cli", "https://dev.azure.com/contoso", "Proj", "",
+            work_item_types=["Bug"], area_paths=[], states=[], last_sync="",
+        )
+
+    assert result == 100
+
+
+async def test_find_id_range_start_no_items():
+    """Returns None when no items exist in any range."""
+    async def fake_run_wiql(auth_method, org, project, pat, **kwargs):
+        return 0, []
+
+    with patch("ado_search.sync_workitems._run_wiql", side_effect=fake_run_wiql):
+        result = await _find_id_range_start(
+            "az-cli", "https://dev.azure.com/contoso", "Proj", "",
+            work_item_types=["Bug"], area_paths=[], states=[], last_sync="",
+        )
+
+    assert result is None

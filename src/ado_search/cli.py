@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re as re_module
 import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -215,6 +216,88 @@ def search_cmd(query, type_filter, state_filter, area_filter, assigned_to, tag_f
             click.echo(f'Results for "{query}" ({len(results)} matches):')
 
         click.echo(format_results(results, fmt=fmt, data_dir=data_path))
+
+
+VALID_GREP_FIELDS = [
+    "title", "description", "acceptance_criteria", "comments",
+    "tags", "assigned_to", "area", "iteration", "state_history",
+]
+
+
+@main.command("grep")
+@click.argument("pattern")
+@click.option("--field", "-f", "fields", multiple=True,
+              type=click.Choice(VALID_GREP_FIELDS, case_sensitive=False),
+              help="Fields to search (repeatable, default: title,description,comments)")
+@click.option("--type", "-t", "type_filter", default=None, help="Filter by work item type")
+@click.option("--state", "-s", "state_filter", default=None, help="Filter by state")
+@click.option("--area", "-a", "area_filter", default=None, help="Filter by area path (prefix)")
+@click.option("--assigned-to", default=None, help="Filter by assignee email")
+@click.option("--tag", "tag_filter", default=None, help="Filter by tag")
+@click.option("--brief", "-b", is_flag=True, help="Show only item IDs and matched field names")
+@click.option("--format", "fmt", type=click.Choice(["compact", "brief", "json"]),
+              default=None, help="Output format (default: compact)")
+@click.option("--ignore-case", "-i", is_flag=True, help="Case-insensitive matching")
+@click.option("--context", "-C", "context_chars", type=int, default=60,
+              help="Characters of context around each match (default: 60)")
+@click.option("--limit", "-n", type=int, default=50, help="Max results (default: 50)")
+@click.option("--data-dir", type=click.Path(), default=None)
+def grep_cmd(pattern, fields, type_filter, state_filter, area_filter, assigned_to,
+             tag_filter, brief, fmt, ignore_case, context_chars, limit, data_dir):
+    """Search work items with regex patterns across fields."""
+    if brief and fmt is None:
+        fmt = "brief"
+    elif fmt is None:
+        fmt = "compact"
+
+    flags = re_module.IGNORECASE if ignore_case else 0
+    try:
+        compiled = re_module.compile(pattern, flags)
+    except re_module.error as e:
+        click.echo(f"Error: Invalid regex pattern: {e}", err=True)
+        raise SystemExit(2)
+
+    data_path = Path(data_dir) if data_dir else _default_data_dir()
+    wi_jsonl = data_path / "work-items.jsonl"
+
+    if not wi_jsonl.exists():
+        click.echo("Error: No data found. Run 'ado-search sync' first.", err=True)
+        raise SystemExit(2)
+
+    candidate_ids = None
+    has_filters = any([type_filter, state_filter, area_filter, assigned_to, tag_filter])
+    if has_filters:
+        db_is_new = not (data_path / "index.db").exists()
+        with _open_db(data_path) as db:
+            _ensure_index(data_path, db, force=db_is_new)
+            candidate_ids = db.get_filtered_ids(
+                type_filter=type_filter, state_filter=state_filter,
+                area_filter=area_filter, assigned_to_filter=assigned_to,
+                tag_filter=tag_filter,
+            )
+        if candidate_ids is not None and not candidate_ids:
+            click.echo("No items match the specified filters.")
+            raise SystemExit(1)
+
+    from ado_search.grep import grep_work_items, format_grep_results
+
+    results, warnings = grep_work_items(
+        jsonl_path=wi_jsonl,
+        pattern=compiled,
+        fields=list(fields) if fields else None,
+        candidate_ids=candidate_ids,
+        context_chars=context_chars,
+        limit=limit,
+    )
+
+    for w in warnings:
+        click.echo(f"Warning: {w}", err=True)
+
+    if not results:
+        click.echo("No matches found.")
+        raise SystemExit(1)
+
+    click.echo(format_grep_results(results, fmt=fmt))
 
 
 @main.command()

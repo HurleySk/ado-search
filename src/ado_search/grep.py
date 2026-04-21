@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 
@@ -63,3 +64,36 @@ def extract_field_text(
         ]
 
     return []
+
+
+def _build_context(text: str, start: int, end: int, context_chars: int) -> str:
+    """Build a context snippet around a match span."""
+    ctx_start = max(0, start - context_chars)
+    ctx_end = min(len(text), end + context_chars)
+    snippet = text[ctx_start:ctx_end]
+    prefix = "..." if ctx_start > 0 else ""
+    suffix = "..." if ctx_end < len(text) else ""
+    return f"{prefix}{snippet}{suffix}"
+
+
+def match_field(
+    pattern: re.Pattern,
+    field_name: str,
+    text: str,
+    *,
+    context_chars: int = 60,
+    comment_author: str | None = None,
+    comment_date: str | None = None,
+) -> list[FieldMatch]:
+    """Apply a compiled regex to a text string and return all matches."""
+    results: list[FieldMatch] = []
+    for m in pattern.finditer(text):
+        results.append(FieldMatch(
+            field=field_name,
+            text_matched=m.group(),
+            context=_build_context(text, m.start(), m.end(), context_chars),
+            offset=m.start(),
+            comment_author=comment_author,
+            comment_date=comment_date,
+        ))
+    return results

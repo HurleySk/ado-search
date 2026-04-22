@@ -93,6 +93,9 @@ ado-search create --type "User Story" --title "Add dark mode" \
   --description "Users want a dark theme option" \
   --tags "ui; theme" --story-points 5
 
+# Create a child task under a parent work item
+ado-search create --type Task --title "Subtask" --parent 62434
+
 # Update a work item
 ado-search update 12345 --state Active --assigned-to "user@example.com"
 

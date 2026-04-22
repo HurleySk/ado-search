@@ -407,12 +407,14 @@ def fetch(ids: tuple[int, ...], data_dir: str | None, dry_run: bool):
 @click.option("--story-points", type=float, default=None, help="Story points / effort")
 @click.option("--field", "extra_fields", multiple=True,
               help="Additional field as Key=Value (repeatable)")
+@click.option("--parent", type=int, default=None,
+              help="Parent work item ID (creates hierarchy link)")
 @click.option("--data-dir", type=click.Path(), default=None,
               help="Data directory (default: ./.ado-search)")
 @click.option("--dry-run", is_flag=True, help="Preview without creating")
 def create(work_item_type, title, description, acceptance_criteria, state, reason,
            area, iteration, assigned_to, tags, priority, story_points, extra_fields,
-           data_dir, dry_run):
+           parent, data_dir, dry_run):
     """Create a new work item in Azure DevOps."""
     conn = _load_conn(data_dir)
 
@@ -434,7 +436,8 @@ def create(work_item_type, title, description, acceptance_criteria, state, reaso
             auth_method=conn.auth_method, pat=conn.pat,
             data_dir=conn.data_path,
             work_item_type=work_item_type, title=title,
-            field_values=field_values, dry_run=dry_run,
+            field_values=field_values, parent=parent,
+            dry_run=dry_run,
         ))
 
         if not dry_run and record:

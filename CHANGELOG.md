@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.5.0] — 2026-04-22
+
+### Added
+
+- **`--parent <id>` on `create`** — sets a parent-child hierarchy link when creating a work item. For PAT/PowerShell auth, the relation is included in the create payload. For az-cli auth, a follow-up `add-link` call is made after creation. Example: `ado-search create --type Task --title "Subtask" --parent 62434`.
+
 ## [1.4.0] — 2026-04-21
 
 ### Added

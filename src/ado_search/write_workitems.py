@@ -138,6 +138,7 @@ async def create_work_item(
     work_item_type: str,
     title: str,
     field_values: dict[str, Any],
+    parent: int | None = None,
     dry_run: bool = False,
 ) -> dict:
     """Create a work item in ADO and merge into local JSONL store.
@@ -149,6 +150,8 @@ async def create_work_item(
         if field_values:
             for k, v in field_values.items():
                 click.echo(f"  {k} = {v}")
+        if parent:
+            click.echo(f"  Parent: #{parent}")
         return {}
 
     # Build the full field set (title is always included)
@@ -167,6 +170,17 @@ async def create_work_item(
     else:
         # PAT and powershell use JSON Patch body
         patch = build_json_patch(all_fields)
+        if parent:
+            target_url = _build_link_url(org, project, parent)
+            patch.append({
+                "op": "add",
+                "path": "/relations/-",
+                "value": {
+                    "rel": LINK_TYPE_MAP["parent"],
+                    "url": target_url,
+                    "attributes": {},
+                },
+            })
         body = json.dumps(patch)
         result = await run_operation(
             auth_method, OP_CREATE,
@@ -177,6 +191,15 @@ async def create_work_item(
         )
 
     item_id = result.parse_json()["id"] if result.returncode == 0 else 0
+
+    # az-cli can't set relations during create — add parent link as follow-up
+    if parent and auth_method == "az-cli" and item_id:
+        await add_link(
+            org=org, project=project, auth_method=auth_method, pat=pat,
+            data_dir=data_dir, source_id=item_id, target_id=parent,
+            link_type="parent",
+        )
+
     return await _check_and_refetch(result, "creating work item", item_id,
                                     org=org, project=project, auth_method=auth_method,
                                     pat=pat, data_dir=data_dir)

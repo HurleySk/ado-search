@@ -130,16 +130,20 @@ def init(org: str, project: str, auth_method: str, pat: str | None, data_dir: st
 @main.command()
 @click.option("--data-dir", type=click.Path(exists=True), default=None)
 @click.option("--dry-run", is_flag=True, help="Show what would be synced without writing")
-def sync(data_dir: str | None, dry_run: bool):
+@click.option("--include-attachments", is_flag=True, default=False,
+              help="Download attachments (overrides config when set)")
+def sync(data_dir: str | None, dry_run: bool, include_attachments: bool):
     """Sync work items and wiki pages from Azure DevOps."""
     conn = _load_conn(data_dir)
     sync_cfg = conn.cfg["sync"]
+    effective_attachments = include_attachments or sync_cfg.get("include_attachments", False)
 
     with _open_db(conn.data_path) as db:
         from ado_search.sync_workitems import sync_work_items
         from ado_search.sync_wiki import sync_wiki
 
-        click.echo("Syncing work items...")
+        suffix = " (with attachments)" if effective_attachments else ""
+        click.echo(f"Syncing work items...{suffix}")
         wi_stats = asyncio.run(sync_work_items(
             org=conn.org, project=conn.project,
             auth_method=conn.auth_method, pat=conn.pat,
@@ -150,7 +154,7 @@ def sync(data_dir: str | None, dry_run: bool):
             last_sync=sync_cfg.get("last_sync", ""),
             max_concurrent=sync_cfg.get("performance", {}).get("max_concurrent", 5),
             include_comments=sync_cfg.get("include_comments", False),
-            include_attachments=sync_cfg.get("include_attachments", False),
+            include_attachments=effective_attachments,
             dry_run=dry_run,
         ))
         click.echo(f"  Work items: {wi_stats['fetched']} synced, {wi_stats['errors']} errors")

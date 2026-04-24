@@ -367,14 +367,19 @@ def show(item_id: str, data_dir: str | None):
 @click.option("--data-dir", type=click.Path(), default=None,
               help="Data directory (default: ./.ado-search)")
 @click.option("--dry-run", is_flag=True, help="Preview without writing")
-def fetch(ids: tuple[int, ...], data_dir: str | None, dry_run: bool):
+@click.option("--include-attachments", is_flag=True, default=False,
+              help="Download attachments (overrides config when set)")
+def fetch(ids: tuple[int, ...], data_dir: str | None, dry_run: bool,
+          include_attachments: bool):
     """Fetch specific work items by ID and add to local store."""
     conn = _load_conn(data_dir)
+    effective_attachments = include_attachments or conn.cfg["sync"].get("include_attachments", False)
 
     with _open_db(conn.data_path) as db:
         from ado_search.sync_workitems import fetch_specific_work_items
 
-        click.echo(f"Fetching {len(ids)} work item(s): {list(ids)}")
+        suffix = " (with attachments)" if effective_attachments else ""
+        click.echo(f"Fetching {len(ids)} work item(s): {list(ids)}{suffix}")
         stats = asyncio.run(fetch_specific_work_items(
             item_ids=list(ids),
             org=conn.org,
@@ -384,7 +389,7 @@ def fetch(ids: tuple[int, ...], data_dir: str | None, dry_run: bool):
             data_dir=conn.data_path,
             max_concurrent=conn.cfg["sync"].get("performance", {}).get("max_concurrent", 5),
             dry_run=dry_run,
-            include_attachments=conn.cfg["sync"].get("include_attachments", False),
+            include_attachments=effective_attachments,
         ))
 
         if not dry_run:

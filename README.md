@@ -55,7 +55,7 @@ Story points are sourced from `StoryPoints` or `Effort` fields. State history tr
 
 ### Attachments & Inline Images
 
-When `include_attachments = true`, sync downloads:
+When `include_attachments = true` in config, or `--include-attachments` is passed on the command line, sync/fetch downloads:
 
 - **File attachments** — stored in `.ado-search/attachments/{work_item_id}/`
 - **Inline images** — images embedded in Description/Acceptance Criteria HTML, stored in `.ado-search/attachments/{work_item_id}/inline/`
@@ -63,6 +63,16 @@ When `include_attachments = true`, sync downloads:
 Attachment filenames are indexed and searchable. Inline images are referenced as `[image: path]` in text output so agents can locate them. Downloads are incremental — existing files with correct size are skipped on re-sync.
 
 Note: attachments require the WIQL/REST sync path (OData doesn't include relations), so OData fast path is skipped when attachments are enabled.
+
+Use `--include-attachments` on `fetch` or `sync` for per-invocation attachment downloads without changing config:
+
+```bash
+# Fetch specific items with their attachments
+ado-search fetch 73541 --include-attachments
+
+# One-time full sync with attachments
+ado-search sync --include-attachments
+```
 
 ## Commands
 

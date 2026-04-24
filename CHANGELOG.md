@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.6.0] — 2026-04-24
+
+### Added
+
+- **`--include-attachments` flag on `fetch` and `sync`** — override the config setting per-invocation to download file attachments and inline images. Useful for targeted fetches where you need attachments for specific work items without enabling them globally. When passed, the flag `or`s with the config value — if either is true, attachments are downloaded. Log output includes "(with attachments)" when active.
+
 ## [1.5.0] — 2026-04-22
 
 ### Added

@@ -32,6 +32,7 @@ def prepare_work_item(
         "priority": meta["priority"],
         "story_points": meta.get("story_points"),
         "parent_id": meta["parent_id"],
+        "closed_date": meta["closed_date"],
         "created": meta["created"],
         "updated": meta["updated"],
         "description": meta["description_full"],

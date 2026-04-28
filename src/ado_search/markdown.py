@@ -74,6 +74,7 @@ def extract_work_item_metadata(raw: dict) -> dict:
         "priority": fields.get("Microsoft.VSTS.Common.Priority"),
         "story_points": sp if sp is not None else fields.get("Microsoft.VSTS.Scheduling.Effort"),
         "parent_id": fields.get("System.Parent"),
+        "closed_date": (fields.get("Microsoft.VSTS.Common.ClosedDate") or "")[:10] or "",
         "created": created_raw[:10] if created_raw else "",
         "updated": updated_raw[:10] if updated_raw else "",
         "description_snippet": snippet,

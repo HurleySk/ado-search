@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.8.0] — 2026-04-28
+
+### Added
+
+- **`closed_date` field on work items** — syncs `Microsoft.VSTS.Common.ClosedDate` from ADO as a first-class field on both OData and WIQL/REST sync paths. Stored in JSONL and SQLite. The `children --include-closed-date` flag now reads this field directly instead of requiring state history from the Updates API, giving closed dates for all items after a single sync.
+
 ## [1.7.0] — 2026-04-28
 
 ### Added

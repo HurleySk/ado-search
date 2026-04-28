@@ -59,6 +59,7 @@ class Database:
                 tags TEXT,
                 priority INTEGER,
                 parent_id INTEGER,
+                closed_date TEXT DEFAULT '',
                 created TEXT,
                 updated TEXT,
                 description TEXT DEFAULT '',
@@ -102,6 +103,7 @@ class Database:
             ("description", "TEXT", "''"),
             ("acceptance_criteria", "TEXT", "''"),
             ("story_points", "REAL", "NULL"),
+            ("closed_date", "TEXT", "''"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE work_items ADD COLUMN {col} {col_type} DEFAULT {default}")
@@ -131,14 +133,15 @@ class Database:
         conn.execute(
             """INSERT INTO work_items
                (id, title, type, state, area, iteration, assigned_to, tags,
-                priority, parent_id, created, updated, description, acceptance_criteria,
-                story_points)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                priority, parent_id, closed_date, created, updated,
+                description, acceptance_criteria, story_points)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                 title=excluded.title, type=excluded.type, state=excluded.state,
                 area=excluded.area, iteration=excluded.iteration,
                 assigned_to=excluded.assigned_to, tags=excluded.tags,
                 priority=excluded.priority, parent_id=excluded.parent_id,
+                closed_date=excluded.closed_date,
                 created=excluded.created, updated=excluded.updated,
                 description=excluded.description,
                 acceptance_criteria=excluded.acceptance_criteria,
@@ -148,6 +151,7 @@ class Database:
                 item["id"], item["title"], item["type"], item["state"],
                 item["area"], item["iteration"], item["assigned_to"],
                 item["tags"], item["priority"], item["parent_id"],
+                item.get("closed_date", ""),
                 item["created"], item["updated"],
                 item.get("description", ""), item.get("acceptance_criteria", ""),
                 item.get("story_points"),

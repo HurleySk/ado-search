@@ -54,13 +54,18 @@ def query_children(
             tags=r["tags"] or "",
             parent_id=r["parent_id"],
             depth=r.get("depth", 1),
+            closed_date=(r.get("closed_date") or None) if include_closed_date else None,
         )
         for r in rows
     ]
     if include_closed_date and items:
-        closed = db.get_closed_dates([it.id for it in items])
-        for it in items:
-            it.closed_date = closed.get(it.id)
+        # Fall back to state_history for items missing closed_date column
+        missing = [it.id for it in items if not it.closed_date and it.state == "Closed"]
+        if missing:
+            from_history = db.get_closed_dates(missing)
+            for it in items:
+                if not it.closed_date and it.id in from_history:
+                    it.closed_date = from_history[it.id]
     return items
 
 

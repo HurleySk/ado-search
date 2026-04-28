@@ -132,11 +132,13 @@ def init(org: str, project: str, auth_method: str, pat: str | None, data_dir: st
 @click.option("--dry-run", is_flag=True, help="Show what would be synced without writing")
 @click.option("--include-attachments", is_flag=True, default=False,
               help="Download attachments (overrides config when set)")
-def sync(data_dir: str | None, dry_run: bool, include_attachments: bool):
+@click.option("--full", is_flag=True, help="Ignore last_sync and re-fetch all items")
+def sync(data_dir: str | None, dry_run: bool, include_attachments: bool, full: bool):
     """Sync work items and wiki pages from Azure DevOps."""
     conn = _load_conn(data_dir)
     sync_cfg = conn.cfg["sync"]
     effective_attachments = include_attachments or sync_cfg.get("include_attachments", False)
+    last_sync = "" if full else sync_cfg.get("last_sync", "")
 
     with _open_db(conn.data_path) as db:
         from ado_search.sync_workitems import sync_work_items
@@ -151,7 +153,7 @@ def sync(data_dir: str | None, dry_run: bool, include_attachments: bool):
             work_item_types=sync_cfg.get("work_item_types", []),
             area_paths=sync_cfg.get("area_paths", []),
             states=sync_cfg.get("states", []),
-            last_sync=sync_cfg.get("last_sync", ""),
+            last_sync=last_sync,
             max_concurrent=sync_cfg.get("performance", {}).get("max_concurrent", 5),
             include_comments=sync_cfg.get("include_comments", False),
             include_attachments=effective_attachments,

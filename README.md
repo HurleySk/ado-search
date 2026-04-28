@@ -79,7 +79,7 @@ ado-search sync --include-attachments
 | Command | Description |
 |---------|-------------|
 | `ado-search init` | Configure organization, project, and auth |
-| `ado-search sync` | Pull latest data from Azure DevOps |
+| `ado-search sync` | Pull latest data from Azure DevOps (`--full` for complete re-fetch) |
 | `ado-search search "query"` | Full-text search with filters |
 | `ado-search show <id>` | Display full content of an item |
 | `ado-search create` | Create a new work item |

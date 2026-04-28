@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.8.1] — 2026-04-28
+
+### Added
+
+- **`--full` flag on `sync`** — ignores `last_sync` and re-fetches all items from ADO. Useful after schema changes (e.g., adding `closed_date`) to backfill fields on existing items.
+
 ## [1.8.0] — 2026-04-28
 
 ### Added

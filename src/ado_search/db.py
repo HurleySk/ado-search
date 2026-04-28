@@ -363,6 +363,7 @@ class Database:
                     UNION ALL
                     SELECT w.id, d.depth + 1 FROM work_items w
                     JOIN descendants d ON w.parent_id = d.id
+                    WHERE d.depth < 50
                 )
                 SELECT w.*, d.depth FROM work_items w
                 JOIN descendants d ON w.id = d.id

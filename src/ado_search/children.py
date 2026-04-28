@@ -126,6 +126,13 @@ def _summary(items: list[ChildItem], parent_id: int) -> str:
     counts: dict[str, int] = {}
     for it in items:
         counts[it.type] = counts.get(it.type, 0) + 1
-    parts = [f"{v} {k}{'s' if v != 1 else ''}" for k, v in
+    def _plural(name: str, n: int) -> str:
+        if n == 1:
+            return name
+        if name.endswith("y") and not name.endswith("ey"):
+            return name[:-1] + "ies"
+        return name + "s"
+
+    parts = [f"{v} {_plural(k, v)}" for k, v in
              sorted(counts.items(), key=lambda x: _TYPE_ORDER.get(x[0], 99))]
     return f"{len(items)} items under #{parent_id} ({', '.join(parts)})"

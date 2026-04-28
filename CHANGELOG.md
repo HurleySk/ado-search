@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0] — 2026-04-28
+
+### Added
+
+- **`ado-search children <parent_id>`** — query work item hierarchy from local SQLite. Shows direct children by default; `--recursive` walks the full tree via recursive CTE. Output formats: `compact` (tabular), `tree` (indented hierarchy), `json`. Supports `--type` and `--state` filters. `--include-closed-date` enriches output with the date each item transitioned to Closed (from state history).
+- **`idx_work_items_parent_id` index** — B-tree index on `parent_id` column for efficient hierarchy queries.
+
 ## [1.6.0] — 2026-04-24
 
 ### Added

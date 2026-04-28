@@ -89,6 +89,7 @@ ado-search sync --include-attachments
 | `ado-search list-links <id>` | List links on a work item (live) |
 | `ado-search list-comments <id>` | List comments on a work item (live) |
 | `ado-search grep "pattern"` | Regex search across work item fields |
+| `ado-search children <parent_id>` | List children (or full tree) of a work item |
 
 ## Create & Update
 
@@ -224,6 +225,32 @@ ado-search grep 'TODO|FIXME' --format json
 Default fields searched: title, description, comments. Use `--field` / `-f` to scope to specific fields (`title`, `description`, `acceptance_criteria`, `comments`, `tags`, `assigned_to`, `area`, `iteration`, `state_history`).
 
 Metadata pre-filters (`--type`, `--state`, `--area`, `--assigned-to`, `--tag`) narrow candidates via SQLite indexes before the regex scan. Exit codes follow grep convention: 0 = matches found, 1 = no matches, 2 = error.
+
+## Children — Hierarchy Queries
+
+Query work item parent-child hierarchy from local data:
+
+```bash
+# Show direct children of an epic
+ado-search children 61123
+
+# Full recursive tree (features, stories, tasks, ...)
+ado-search children 61123 --recursive
+
+# Indented tree view
+ado-search children 61123 --recursive --format tree
+
+# Filter to user stories only
+ado-search children 61123 --recursive --type "User Story"
+
+# Include closed date from state history
+ado-search children 61123 --recursive --include-closed-date
+
+# JSON for scripting
+ado-search children 61123 --recursive --format json --include-closed-date
+```
+
+The `children` command queries the local SQLite index (no API calls). Use `sync` or `fetch` first to ensure data is current. Exit codes: 0 = children found, 1 = no children, 2 = parent not found.
 
 ## Prerequisites
 

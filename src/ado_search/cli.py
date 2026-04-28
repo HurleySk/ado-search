@@ -304,6 +304,57 @@ def grep_cmd(pattern, fields, type_filter, state_filter, area_filter, assigned_t
     click.echo(format_grep_results(results, fmt=fmt))
 
 
+@main.command("children")
+@click.argument("parent_id", type=int)
+@click.option("--recursive", "-r", is_flag=True, help="Show all descendants, not just direct children")
+@click.option("--type", "-t", "type_filter", default=None, help="Filter by work item type")
+@click.option("--state", "-s", "state_filter", default=None, help="Filter by state")
+@click.option("--format", "fmt", type=click.Choice(["compact", "tree", "json"]),
+              default="compact", help="Output format")
+@click.option("--include-closed-date", is_flag=True,
+              help="Enrich output with closed date from state history")
+@click.option("--data-dir", type=click.Path(), default=None)
+def children_cmd(parent_id, recursive, type_filter, state_filter, fmt,
+                 include_closed_date, data_dir):
+    """List children of a work item by parent ID."""
+    data_path = Path(data_dir) if data_dir else _default_data_dir()
+
+    wi_jsonl = data_path / "work-items.jsonl"
+    if not wi_jsonl.exists():
+        click.echo("Error: No data found. Run 'ado-search sync' first.", err=True)
+        raise SystemExit(1)
+
+    db_is_new = not (data_path / "index.db").exists()
+    with _open_db(data_path) as db:
+        _ensure_index(data_path, db, force=db_is_new)
+
+        parent = db.get_work_item(parent_id)
+        if parent is None:
+            click.echo(f"Error: Work item #{parent_id} not found in local data.", err=True)
+            raise SystemExit(2)
+
+        from ado_search.children import query_children, format_children
+
+        items = query_children(
+            db, parent_id,
+            recursive=recursive,
+            type_filter=type_filter,
+            state_filter=state_filter,
+            include_closed_date=include_closed_date,
+        )
+
+        if not items:
+            click.echo(f"No children found for #{parent_id}.")
+            raise SystemExit(1)
+
+        if fmt != "json":
+            mode = "descendants" if recursive else "children"
+            click.echo(f"{len(items)} {mode} of #{parent_id} ({parent['type']}: {parent['title']}):")
+            click.echo()
+
+        click.echo(format_children(items, fmt=fmt, parent_id=parent_id))
+
+
 @main.command()
 @click.argument("item_id")
 @click.option("--data-dir", type=click.Path(), default=None)

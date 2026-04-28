@@ -96,6 +96,7 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_work_items_state ON work_items(state);
             CREATE INDEX IF NOT EXISTS idx_work_items_area ON work_items(area);
             CREATE INDEX IF NOT EXISTS idx_work_items_assigned_to ON work_items(assigned_to);
+            CREATE INDEX IF NOT EXISTS idx_work_items_parent_id ON work_items(parent_id);
         """)
         for col, col_type, default in [
             ("description", "TEXT", "''"),
@@ -345,6 +346,59 @@ class Database:
         conn = self._connect()
         row = conn.execute("SELECT * FROM wiki_pages WHERE path = ?", (path,)).fetchone()
         return dict(row) if row else None
+
+    def get_children(
+        self,
+        parent_id: int,
+        *,
+        recursive: bool = False,
+        type_filter: str | None = None,
+        state_filter: str | None = None,
+    ) -> list[dict]:
+        conn = self._connect()
+        if recursive:
+            sql = """
+                WITH RECURSIVE descendants(id, depth) AS (
+                    SELECT id, 1 FROM work_items WHERE parent_id = ?
+                    UNION ALL
+                    SELECT w.id, d.depth + 1 FROM work_items w
+                    JOIN descendants d ON w.parent_id = d.id
+                )
+                SELECT w.*, d.depth FROM work_items w
+                JOIN descendants d ON w.id = d.id
+                WHERE 1=1
+            """
+        else:
+            sql = "SELECT *, 1 AS depth FROM work_items WHERE parent_id = ?"
+        params: list = [parent_id]
+        if type_filter:
+            sql += " AND type = ?"
+            params.append(type_filter)
+        if state_filter:
+            sql += " AND state = ?"
+            params.append(state_filter)
+        sql += " ORDER BY type, id"
+        rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_closed_dates(self, item_ids: list[int]) -> dict[int, str]:
+        if not item_ids:
+            return {}
+        conn = self._connect()
+        result: dict[int, str] = {}
+        for i in range(0, len(item_ids), _BATCH_CHUNK):
+            chunk = item_ids[i:i + _BATCH_CHUNK]
+            placeholders = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                f"""SELECT item_id, MAX(changed_date) as closed_date
+                    FROM work_item_state_changes
+                    WHERE to_state = 'Closed' AND item_id IN ({placeholders})
+                    GROUP BY item_id""",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                result[row["item_id"]] = row["closed_date"]
+        return result
 
     def reindex_from_jsonl(self, work_items_path: Path, wiki_pages_path: Path) -> None:
         """Rebuild the entire DB index from JSONL files."""

@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 import click
 
-from ado_search.auth import OP_ADD_COMMENT, OP_ADD_LINK, OP_CREATE, OP_UPDATE
+from ado_search.auth import OP_ADD_COMMENT, OP_ADD_LINK, OP_CREATE, OP_IDENTITY_LOOKUP, OP_UPDATE
 from ado_search.runner import run_operation
 from ado_search.sync_common import finalize_jsonl
 
@@ -258,6 +259,85 @@ async def update_work_item(
                                     auth_method=auth_method, pat=pat, data_dir=data_dir)
 
 
+_MENTION_RE = re.compile(r'(?<![="\w@.])@(\w[\w.-]+)')
+
+
+def _find_mention_candidates(text: str) -> list[str]:
+    """Extract unique @mention names from text."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for m in _MENTION_RE.finditer(text):
+        name = m.group(1)
+        if name not in seen:
+            seen.add(name)
+            result.append(name)
+    return result
+
+
+async def _resolve_identity(
+    name: str, *, org: str, auth_method: str, pat: str,
+) -> dict | None:
+    """Resolve a display name to an ADO identity via Identity Picker API."""
+    body = json.dumps({
+        "query": name,
+        "identityTypes": ["user"],
+        "operationScopes": ["ims"],
+        "properties": ["DisplayName", "Mail"],
+        "options": {"MinResults": 1, "MaxResults": 5},
+    })
+    result = await run_operation(
+        auth_method, OP_IDENTITY_LOOKUP,
+        org=org, project="", pat=pat,
+        body=body, content_type="application/json",
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        data = result.parse_json()
+    except (json.JSONDecodeError, ValueError):
+        return None
+    identities = data.get("results", [{}])[0].get("identities", [])
+    if not identities:
+        return None
+    best = identities[0]
+    return {
+        "localId": best.get("localId", ""),
+        "displayName": best.get("displayName", name),
+        "mail": best.get("mail", ""),
+    }
+
+
+async def resolve_mentions(
+    text: str, *, org: str, auth_method: str, pat: str,
+) -> str:
+    """Detect @name patterns in text and replace with ADO mention HTML."""
+    candidates = _find_mention_candidates(text)
+    if not candidates:
+        return text
+
+    tasks = {
+        name: _resolve_identity(name, org=org, auth_method=auth_method, pat=pat)
+        for name in candidates
+    }
+    results = await asyncio.gather(*tasks.values())
+    resolved = dict(zip(tasks.keys(), results))
+
+    for name in sorted(resolved, key=len, reverse=True):
+        identity = resolved[name]
+        if identity is None:
+            click.echo(f"Warning: Could not resolve @{name} — left as plain text", err=True)
+            continue
+        mention_html = (
+            f'<a href="mailto:{identity["mail"]}" '
+            f'data-vss-mention="version:2.0,{identity["localId"]}">'
+            f'@{identity["displayName"]}</a>'
+        )
+        pattern = re.compile(r'(?<![="\w@.])@' + re.escape(name), re.IGNORECASE)
+        text = pattern.sub(mention_html, text)
+
+    return text
+
+
 async def add_comment(
     *,
     org: str,
@@ -267,6 +347,7 @@ async def add_comment(
     data_dir: Path,
     work_item_id: int,
     text: str,
+    resolve_mentions_flag: bool = True,
     dry_run: bool = False,
 ) -> dict:
     """Post a comment on an ADO work item and refresh local JSONL store.
@@ -277,6 +358,9 @@ async def add_comment(
         preview = text[:200] + ("…" if len(text) > 200 else "")
         click.echo(f"Would add comment to work item #{work_item_id}:\n{preview}")
         return {}
+
+    if resolve_mentions_flag:
+        text = await resolve_mentions(text, org=org, auth_method=auth_method, pat=pat)
 
     body = json.dumps({"text": text})
 

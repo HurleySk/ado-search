@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.9.0] — 2026-05-08
+
+### Added
+
+- **@mention resolution in `add-comment`** — `@DisplayName` patterns in comment text are auto-resolved to ADO identities via the Identity Picker API and replaced with clickable mention HTML (`data-vss-mention`). Mentioned users receive notifications. Supports all auth methods (PAT, az-cli, az-powershell). Unresolved mentions are left as plain text with a warning. Use `--no-mentions` to skip resolution.
+
 ## [1.8.1] — 2026-04-28
 
 ### Added

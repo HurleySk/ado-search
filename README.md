@@ -138,9 +138,17 @@ ado-search add-comment 12345 @review-notes.html
 # Inline HTML still works
 ado-search add-comment 12345 "<p>Looks good!</p>"
 
+# @mentions are auto-resolved to ADO identity links
+ado-search add-comment 12345 "Great work @John.Smith, please review"
+
+# Skip mention resolution (post raw text as-is)
+ado-search add-comment 12345 "@not-a-user just a note" --no-mentions
+
 # Escape a literal @ with @@
 ado-search update 12345 --description "@@mention is not a file reference"
 ```
+
+`@DisplayName` patterns in comment text are resolved via the ADO Identity Picker API and replaced with mention HTML so the mentioned user receives a notification.
 
 After create/update/add-comment/add-link, the item is automatically re-fetched and merged into the local JSONL store so it appears in search immediately.
 

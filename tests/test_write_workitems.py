@@ -12,9 +12,11 @@ from ado_search.write_workitems import (
     build_az_fields,
     build_json_patch,
     resolve_fields,
+    resolve_mentions,
     resolve_value,
     create_work_item,
     update_work_item,
+    _find_mention_candidates,
     FIELD_MAP,
     LINK_TYPE_MAP,
 )
@@ -422,3 +424,135 @@ def test_add_link_raw_type_passthrough(tmp_path):
 
     body = json.loads(mock_op.call_args.kwargs["body"])
     assert body[0]["value"]["rel"] == "System.LinkTypes.Custom"
+
+
+# ── mention detection tests ──────────────────────────────────────
+
+
+def test_find_mention_candidates_single():
+    assert _find_mention_candidates("Hello @john") == ["john"]
+
+
+def test_find_mention_candidates_multiple():
+    assert _find_mention_candidates("@alice and @bob") == ["alice", "bob"]
+
+
+def test_find_mention_candidates_dotted_name():
+    assert _find_mention_candidates("cc @John.Smith") == ["John.Smith"]
+
+
+def test_find_mention_candidates_hyphenated_name():
+    assert _find_mention_candidates("ask @mary-jane") == ["mary-jane"]
+
+
+def test_find_mention_candidates_skips_email():
+    assert _find_mention_candidates("user@domain.com") == []
+
+
+def test_find_mention_candidates_skips_html_attr():
+    assert _find_mention_candidates('href="mailto:x@y.com"') == []
+
+
+def test_find_mention_candidates_no_mentions():
+    assert _find_mention_candidates("plain text") == []
+
+
+def test_find_mention_candidates_deduplicates():
+    assert _find_mention_candidates("@alice and @alice again") == ["alice"]
+
+
+def test_find_mention_candidates_skips_double_at():
+    assert _find_mention_candidates("@@escaped") == []
+
+
+# ── resolve_mentions tests ───────────────────────────────────────
+
+
+def _make_identity_result(local_id, display_name, mail):
+    return _make_command_result({
+        "results": [{"identities": [{
+            "localId": local_id,
+            "displayName": display_name,
+            "mail": mail,
+        }]}]
+    })
+
+
+def test_resolve_mentions_replaces_single():
+    mock_result = _make_identity_result("abc-123", "John Doe", "john@co.com")
+    with patch("ado_search.write_workitems.run_operation", new_callable=AsyncMock, return_value=mock_result):
+        out = asyncio.run(resolve_mentions(
+            "Hello @john!", org="https://dev.azure.com/co", auth_method="pat", pat="fake",
+        ))
+    assert 'data-vss-mention="version:2.0,abc-123"' in out
+    assert "@John Doe</a>" in out
+    assert "mailto:john@co.com" in out
+
+
+def test_resolve_mentions_no_match_leaves_text():
+    mock_result = _make_command_result({"results": [{"identities": []}]})
+    with patch("ado_search.write_workitems.run_operation", new_callable=AsyncMock, return_value=mock_result):
+        out = asyncio.run(resolve_mentions(
+            "Hello @nobody!", org="https://dev.azure.com/co", auth_method="pat", pat="fake",
+        ))
+    assert "@nobody" in out
+    assert "data-vss-mention" not in out
+
+
+def test_resolve_mentions_no_candidates():
+    out = asyncio.run(resolve_mentions(
+        "plain text", org="https://dev.azure.com/co", auth_method="pat", pat="fake",
+    ))
+    assert out == "plain text"
+
+
+def test_add_comment_with_mentions_pat(tmp_path):
+    identity_result = _make_identity_result("id-1", "Alice", "alice@co.com")
+    comment_result = _make_command_result({"id": 1, "text": "resolved"})
+    record = _make_record(item_id=42)
+
+    call_count = 0
+
+    async def side_effect(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if "identity-lookup" in args:
+            return identity_result
+        return comment_result
+
+    with patch("ado_search.write_workitems.run_operation", new_callable=AsyncMock, side_effect=side_effect), \
+         patch("ado_search.write_workitems._refetch_and_merge", new_callable=AsyncMock, return_value=record):
+        result = asyncio.run(add_comment(
+            org="https://dev.azure.com/co", project="P",
+            auth_method="pat", pat="fake", data_dir=tmp_path,
+            work_item_id=42, text="Great work @alice!",
+        ))
+    assert result["id"] == 42
+    assert call_count == 2
+
+
+def test_add_comment_no_mentions_flag(tmp_path):
+    comment_result = _make_command_result({"id": 1, "text": "@raw"})
+    record = _make_record(item_id=42)
+
+    with patch("ado_search.write_workitems.run_operation", new_callable=AsyncMock, return_value=comment_result) as mock_op, \
+         patch("ado_search.write_workitems._refetch_and_merge", new_callable=AsyncMock, return_value=record):
+        asyncio.run(add_comment(
+            org="https://dev.azure.com/co", project="P",
+            auth_method="pat", pat="fake", data_dir=tmp_path,
+            work_item_id=42, text="Hello @alice",
+            resolve_mentions_flag=False,
+        ))
+    mock_op.assert_called_once()
+    body = json.loads(mock_op.call_args.kwargs["body"])
+    assert body["text"] == "Hello @alice"
+
+
+def test_add_comment_dry_run_skips_mentions(tmp_path):
+    with patch("ado_search.write_workitems.run_operation", new_callable=AsyncMock) as mock_op:
+        asyncio.run(add_comment(
+            org="https://dev.azure.com/co", project="P",
+            auth_method="pat", pat="fake", data_dir=tmp_path,
+            work_item_id=42, text="Hello @alice", dry_run=True,
+        ))
+    mock_op.assert_not_called()

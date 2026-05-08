@@ -574,10 +574,13 @@ def update(work_item_id, title, state, reason, description, acceptance_criteria,
 @click.option("--data-dir", type=click.Path(), default=None,
               help="Data directory (default: ./.ado-search)")
 @click.option("--dry-run", is_flag=True, help="Preview without posting")
-def add_comment_cmd(work_item_id, text, data_dir, dry_run):
+@click.option("--no-mentions", is_flag=True,
+              help="Skip @mention resolution (post raw text as-is)")
+def add_comment_cmd(work_item_id, text, data_dir, dry_run, no_mentions):
     """Add a comment to an Azure DevOps work item.
 
     TEXT can be an inline HTML string or @path/to/file.html to read from a file.
+    @DisplayName patterns are auto-resolved to ADO mention links.
     """
     from ado_search.write_workitems import add_comment, resolve_value
 
@@ -589,7 +592,9 @@ def add_comment_cmd(work_item_id, text, data_dir, dry_run):
             org=conn.org, project=conn.project,
             auth_method=conn.auth_method, pat=conn.pat,
             data_dir=conn.data_path,
-            work_item_id=work_item_id, text=text, dry_run=dry_run,
+            work_item_id=work_item_id, text=text,
+            resolve_mentions_flag=not no_mentions,
+            dry_run=dry_run,
         ))
 
         if not dry_run and record:

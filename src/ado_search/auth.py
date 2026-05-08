@@ -21,6 +21,7 @@ OP_CREATE = "create"
 OP_UPDATE = "update"
 OP_ADD_COMMENT = "add-comment"
 OP_ADD_LINK = "add-link"
+OP_IDENTITY_LOOKUP = "identity-lookup"
 
 
 @dataclass
@@ -174,6 +175,12 @@ OPERATIONS: dict[str, OperationDef] = {
         method="PATCH",
         path="{url_project}/_apis/wit/workitems/{work_item_id}",
         query_params=["api-version=7.1"],
+        has_body=True,
+    ),
+    OP_IDENTITY_LOOKUP: OperationDef(
+        method="POST",
+        path="_apis/IdentityPicker/Identities",
+        query_params=["api-version=5.1-preview.1"],
         has_body=True,
     ),
 }

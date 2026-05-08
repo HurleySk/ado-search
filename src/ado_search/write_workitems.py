@@ -8,7 +8,7 @@ from typing import Any
 
 import click
 
-from ado_search.auth import OP_ADD_COMMENT, OP_ADD_LINK, OP_CREATE, OP_IDENTITY_LOOKUP, OP_UPDATE
+from ado_search.auth import OP_ADD_COMMENT, OP_ADD_LINK, OP_CREATE, OP_IDENTITY_LOOKUP, OP_SHOW, OP_UPDATE
 from ado_search.runner import run_operation
 from ado_search.sync_common import finalize_jsonl
 
@@ -426,6 +426,77 @@ async def add_link(
     )
 
     return await _check_and_refetch(result, f"adding link from #{source_id} to #{target_id}",
+                                    source_id, org=org, project=project,
+                                    auth_method=auth_method, pat=pat, data_dir=data_dir)
+
+
+async def remove_link(
+    *,
+    org: str,
+    project: str,
+    auth_method: str,
+    pat: str = "",
+    data_dir: Path,
+    source_id: int,
+    target_id: int,
+    link_type: str,
+    dry_run: bool = False,
+) -> dict:
+    """Remove a link between two ADO work items and refresh local JSONL store.
+
+    Fetches the source work item to find the matching relation index, then
+    sends a JSON Patch remove operation.
+
+    Returns the normalized JSONL record for the source work item.
+    """
+    rel_type = LINK_TYPE_MAP.get(link_type.lower(), link_type)
+
+    show_result = await run_operation(
+        auth_method, OP_SHOW,
+        org=org, project=project, pat=pat,
+        work_item_id=source_id,
+    )
+    if show_result.returncode != 0:
+        click.echo(f"Error fetching work item #{source_id}: {show_result.stderr}", err=True)
+        raise SystemExit(1)
+
+    try:
+        item = show_result.parse_json()
+    except (json.JSONDecodeError, ValueError):
+        click.echo(f"Error: invalid response for work item #{source_id}", err=True)
+        raise SystemExit(1)
+
+    relations = item.get("relations") or []
+    target_suffix = f"/{target_id}"
+    match_index = None
+    for i, rel in enumerate(relations):
+        if rel.get("rel") == rel_type and rel.get("url", "").endswith(target_suffix):
+            match_index = i
+            break
+
+    if match_index is None:
+        click.echo(
+            f"Error: no '{rel_type}' link from #{source_id} to #{target_id} found",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    if dry_run:
+        click.echo(f"Would remove '{rel_type}' link from #{source_id} to #{target_id}")
+        return {}
+
+    patch = [{"op": "remove", "path": f"/relations/{match_index}"}]
+    body = json.dumps(patch)
+
+    result = await run_operation(
+        auth_method, OP_ADD_LINK,
+        org=org, project=project, pat=pat,
+        work_item_id=source_id,
+        body=body,
+        content_type="application/json-patch+json",
+    )
+
+    return await _check_and_refetch(result, f"removing link from #{source_id} to #{target_id}",
                                     source_id, org=org, project=project,
                                     auth_method=auth_method, pat=pat, data_dir=data_dir)
 

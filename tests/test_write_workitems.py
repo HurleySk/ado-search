@@ -11,6 +11,7 @@ from ado_search.write_workitems import (
     add_link,
     build_az_fields,
     build_json_patch,
+    remove_link,
     resolve_fields,
     resolve_mentions,
     resolve_value,
@@ -424,6 +425,125 @@ def test_add_link_raw_type_passthrough(tmp_path):
 
     body = json.loads(mock_op.call_args.kwargs["body"])
     assert body[0]["value"]["rel"] == "System.LinkTypes.Custom"
+
+
+# ── remove_link tests ────────────────────────────────────────────
+
+
+def _make_show_result_with_relations(relations):
+    """Build a CommandResult for OP_SHOW that includes relations."""
+    return _make_command_result({"id": 100, "relations": relations})
+
+
+def test_remove_link_dry_run(tmp_path):
+    """Dry run should fetch the item but not patch it."""
+    show_result = _make_show_result_with_relations([
+        {"rel": "System.LinkTypes.Related", "url": "https://dev.azure.com/co/P/_apis/wit/workItems/200", "attributes": {}},
+    ])
+    with patch("ado_search.write_workitems.run_operation", new_callable=AsyncMock, return_value=show_result) as mock_op:
+        result = asyncio.run(remove_link(
+            org="https://dev.azure.com/co", project="P",
+            auth_method="pat", pat="fake",
+            data_dir=tmp_path,
+            source_id=100, target_id=200,
+            link_type="related", dry_run=True,
+        ))
+    mock_op.assert_called_once()  # only the show call, no patch
+    assert result == {}
+
+
+def test_remove_link_pat(tmp_path):
+    """PAT auth should send JSON Patch remove operation at correct index."""
+    show_result = _make_show_result_with_relations([
+        {"rel": "System.LinkTypes.Hierarchy-Forward", "url": "https://dev.azure.com/co/P/_apis/wit/workItems/300", "attributes": {}},
+        {"rel": "System.LinkTypes.Related", "url": "https://dev.azure.com/co/P/_apis/wit/workItems/200", "attributes": {}},
+    ])
+    patch_result = _make_command_result({"id": 100, "relations": []})
+    record = _make_record(item_id=100)
+
+    call_count = 0
+
+    async def side_effect(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return show_result
+        return patch_result
+
+    with patch("ado_search.write_workitems.run_operation", new_callable=AsyncMock, side_effect=side_effect) as mock_op, \
+         patch("ado_search.write_workitems._refetch_and_merge", new_callable=AsyncMock, return_value=record):
+        result = asyncio.run(remove_link(
+            org="https://dev.azure.com/co", project="P",
+            auth_method="pat", pat="fake",
+            data_dir=tmp_path,
+            source_id=100, target_id=200,
+            link_type="related",
+        ))
+
+    assert result["id"] == 100
+    assert call_count == 2
+    # Second call is the patch
+    patch_call = mock_op.call_args_list[1]
+    body = json.loads(patch_call.kwargs["body"])
+    assert body[0]["op"] == "remove"
+    assert body[0]["path"] == "/relations/1"  # index 1, not 0
+
+
+def test_remove_link_not_found(tmp_path):
+    """Should exit with error when link doesn't exist."""
+    show_result = _make_show_result_with_relations([
+        {"rel": "System.LinkTypes.Related", "url": "https://dev.azure.com/co/P/_apis/wit/workItems/999", "attributes": {}},
+    ])
+    with patch("ado_search.write_workitems.run_operation", new_callable=AsyncMock, return_value=show_result):
+        with pytest.raises(SystemExit):
+            asyncio.run(remove_link(
+                org="https://dev.azure.com/co", project="P",
+                auth_method="pat", pat="fake",
+                data_dir=tmp_path,
+                source_id=100, target_id=200,
+                link_type="related",
+            ))
+
+
+def test_remove_link_no_relations(tmp_path):
+    """Should exit with error when item has no relations."""
+    show_result = _make_show_result_with_relations([])
+    with patch("ado_search.write_workitems.run_operation", new_callable=AsyncMock, return_value=show_result):
+        with pytest.raises(SystemExit):
+            asyncio.run(remove_link(
+                org="https://dev.azure.com/co", project="P",
+                auth_method="pat", pat="fake",
+                data_dir=tmp_path,
+                source_id=100, target_id=200,
+                link_type="related",
+            ))
+
+
+def test_remove_link_resolves_friendly_name(tmp_path):
+    """Friendly type name should resolve before matching."""
+    show_result = _make_show_result_with_relations([
+        {"rel": "System.LinkTypes.Hierarchy-Reverse", "url": "https://dev.azure.com/co/P/_apis/wit/workItems/200", "attributes": {}},
+    ])
+    patch_result = _make_command_result({"id": 100, "relations": []})
+    record = _make_record(item_id=100)
+
+    call_count = 0
+
+    async def side_effect(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return show_result if call_count == 1 else patch_result
+
+    with patch("ado_search.write_workitems.run_operation", new_callable=AsyncMock, side_effect=side_effect), \
+         patch("ado_search.write_workitems._refetch_and_merge", new_callable=AsyncMock, return_value=record):
+        result = asyncio.run(remove_link(
+            org="https://dev.azure.com/co", project="P",
+            auth_method="pat", pat="fake",
+            data_dir=tmp_path,
+            source_id=100, target_id=200,
+            link_type="parent",
+        ))
+    assert result["id"] == 100
 
 
 # ── mention detection tests ──────────────────────────────────────

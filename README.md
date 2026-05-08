@@ -86,6 +86,7 @@ ado-search sync --include-attachments
 | `ado-search update <id>` | Update an existing work item |
 | `ado-search add-comment <id> <text>` | Add a comment to a work item |
 | `ado-search add-link <source> <target>` | Add a link between two work items |
+| `ado-search remove-link <source> <target>` | Remove a link between two work items |
 | `ado-search list-links <id>` | List links on a work item (live) |
 | `ado-search list-comments <id>` | List comments on a work item (live) |
 | `ado-search grep "pattern"` | Regex search across work item fields |
@@ -169,6 +170,9 @@ ado-search add-link 12345 67893 --type "System.LinkTypes.Related"
 
 # Preview without creating
 ado-search add-link 12345 67890 --type child --dry-run
+
+# Remove a link
+ado-search remove-link 12345 67890 --type parent
 
 # List all links on a work item (live from ADO)
 ado-search list-links 12345

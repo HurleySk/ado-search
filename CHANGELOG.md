@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.10.0] — 2026-05-08
+
+### Added
+
+- **`ado-search remove-link <source> <target> --type <type>`** — remove a link between two work items. Fetches the source item to find the matching relation by type and target, then sends a JSON Patch remove operation. Supports the same friendly type names as `add-link` (`related`, `parent`, `child`, etc.) and `--dry-run`.
+
 ## [1.9.0] — 2026-05-08
 
 ### Added

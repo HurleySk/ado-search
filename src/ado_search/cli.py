@@ -636,6 +636,39 @@ def add_link_cmd(source_id, target_id, link_type, comment, data_dir, dry_run):
             )
 
 
+@main.command("remove-link")
+@click.argument("source_id", type=int)
+@click.argument("target_id", type=int)
+@click.option("--type", "link_type", required=True,
+              help="Link type: related, parent, child, duplicate, duplicate-of, depends-on, predecessor, successor (or raw ADO type)")
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Data directory (default: ./.ado-search)")
+@click.option("--dry-run", is_flag=True, help="Preview without removing the link")
+def remove_link_cmd(source_id, target_id, link_type, data_dir, dry_run):
+    """Remove a link between two Azure DevOps work items.
+
+    SOURCE_ID is the work item to modify. TARGET_ID is the linked work item.
+    """
+    from ado_search.write_workitems import remove_link
+
+    conn = _load_conn(data_dir)
+
+    with _open_db(conn.data_path) as db:
+        record = asyncio.run(remove_link(
+            org=conn.org, project=conn.project,
+            auth_method=conn.auth_method, pat=conn.pat,
+            data_dir=conn.data_path,
+            source_id=source_id, target_id=target_id,
+            link_type=link_type, dry_run=dry_run,
+        ))
+
+        if not dry_run and record:
+            _ensure_index(conn.data_path, db, force=True)
+            click.echo(
+                f"Removed '{link_type}' link from #{source_id} to #{target_id}"
+            )
+
+
 @main.command("list-links")
 @click.argument("work_item_id", type=int)
 @click.option("--data-dir", type=click.Path(), default=None,

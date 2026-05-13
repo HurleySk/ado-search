@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import mimetypes
 from pathlib import Path
 
 import click
@@ -32,7 +31,8 @@ async def upload_attachment(
         click.echo(f"[dry-run] Would upload {file_path.name!r} to work item #{work_item_id}")
         return {}
 
-    content_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+    # ADO attachments API only accepts application/octet-stream for binary uploads
+    content_type = "application/octet-stream"
 
     # Step 1: Upload the binary file
     if auth_method == "pat":

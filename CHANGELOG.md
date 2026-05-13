@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.11.1] - 2026-05-13
+
+### Fixed
+
+- **`upload-attachment` Content-Type** - ADO attachments API rejects specific MIME types (e.g. xlsx). Always sends `application/octet-stream` instead of guessing via `mimetypes`.
+
 ## [1.11.0] - 2026-05-13
 
 ### Added

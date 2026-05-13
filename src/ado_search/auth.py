@@ -21,6 +21,7 @@ OP_CREATE = "create"
 OP_UPDATE = "update"
 OP_ADD_COMMENT = "add-comment"
 OP_ADD_LINK = "add-link"
+OP_UPLOAD_ATTACHMENT = "upload-attachment"
 OP_IDENTITY_LOOKUP = "identity-lookup"
 
 
@@ -175,6 +176,12 @@ OPERATIONS: dict[str, OperationDef] = {
         method="PATCH",
         path="{url_project}/_apis/wit/workitems/{work_item_id}",
         query_params=["api-version=7.1"],
+        has_body=True,
+    ),
+    OP_UPLOAD_ATTACHMENT: OperationDef(
+        method="POST",
+        path="{url_project}/_apis/wit/attachments",
+        query_params=["fileName={path}", "api-version=7.1"],
         has_body=True,
     ),
     OP_IDENTITY_LOOKUP: OperationDef(
@@ -400,6 +407,37 @@ def pat_download_binary(*, url: str, pat: str, dest_path: Path) -> None:
                 shutil.copyfileobj(resp, f)
     except HTTPError as e:
         raise RuntimeError(f"HTTP {e.code} downloading {url}: {e.read().decode('utf-8', errors='replace')[:500]}")
+
+
+def build_upload_command(
+    url: str,
+    file_path: Path,
+    auth_method: str,
+    content_type: str = "application/octet-stream",
+) -> list[str]:
+    """Build a PowerShell command to POST a binary file to an ADO endpoint.
+
+    Uses Invoke-RestMethod -InFile so binary content is never decoded as text.
+    Works for both az-powershell and az-cli auth (token sourced differently).
+    """
+    safe_url = url.replace("'", "''")
+    safe_file = str(file_path).replace("'", "''")
+
+    if auth_method == "az-powershell":
+        token_expr = f"(Get-AzAccessToken -ResourceUrl '{ADO_RESOURCE_ID}').Token"
+    else:  # az-cli
+        token_expr = (
+            f"(az account get-access-token --resource '{ADO_RESOURCE_ID}' "
+            f"--query accessToken -o tsv).Trim()"
+        )
+
+    script = (
+        f"$token = {token_expr}; "
+        f"$headers = @{{Authorization = \"Bearer $token\"}}; "
+        f"Invoke-RestMethod -Uri '{safe_url}' -Method Post -Headers $headers "
+        f"-InFile '{safe_file}' -ContentType '{content_type}' | ConvertTo-Json -Depth 10"
+    )
+    return ["pwsh", "-NoProfile", "-Command", script]
 
 
 def build_download_command(

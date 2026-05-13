@@ -754,3 +754,35 @@ def list_comments_cmd(work_item_id, data_dir):
         click.echo(f"\n  [{date}] {author}:")
         for line in text.split("\n"):
             click.echo(f"    {line}")
+
+
+@main.command("upload-attachment")
+@click.argument("work_item_id", type=int)
+@click.argument("file_path", type=click.Path(exists=True, path_type=Path))
+@click.option("--dry-run", is_flag=True, help="Preview without uploading")
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Data directory (default: ./.ado-search)")
+def upload_attachment_cmd(work_item_id, file_path, dry_run, data_dir):
+    """Upload a file as an attachment to an Azure DevOps work item."""
+    from ado_search.upload_attachment import upload_attachment
+
+    conn = _load_conn(data_dir)
+
+    with _open_db(conn.data_path) as db:
+        result = asyncio.run(upload_attachment(
+            work_item_id, Path(file_path),
+            org=conn.org, project=conn.project,
+            auth_method=conn.auth_method, pat=conn.pat,
+            data_dir=conn.data_path,
+            dry_run=dry_run,
+        ))
+
+        if dry_run:
+            return
+
+        if not result:
+            click.echo(f"Error attaching file to #{work_item_id}", err=True)
+            raise SystemExit(1)
+
+        _ensure_index(conn.data_path, db, force=True)
+        click.echo(f"Attached {Path(file_path).name!r} to work item #{work_item_id}")

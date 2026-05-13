@@ -87,6 +87,7 @@ ado-search sync --include-attachments
 | `ado-search add-comment <id> <text>` | Add a comment to a work item |
 | `ado-search add-link <source> <target>` | Add a link between two work items |
 | `ado-search remove-link <source> <target>` | Remove a link between two work items |
+| `ado-search upload-attachment <id> <file>` | Upload a local file as an attachment to a work item |
 | `ado-search list-links <id>` | List links on a work item (live) |
 | `ado-search list-comments <id>` | List comments on a work item (live) |
 | `ado-search grep "pattern"` | Regex search across work item fields |

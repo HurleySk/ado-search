@@ -150,6 +150,47 @@ def test_download_inline_images(tmp_path):
     assert metadata[0]["local_path"] == "attachments/400/inline/abc-123.png"
 
 
+def test_extract_inline_images_from_comment_html():
+    """Comments can contain pasted screenshots as inline images."""
+    html = '<div><p>Here is the error:</p><img src="https://dev.azure.com/contoso/_apis/wit/attachments/a1b2c3d4-e5f6-7890-abcd-ef1234567890" /><p>Please fix.</p></div>'
+    images = extract_inline_images(html)
+    assert len(images) == 1
+    assert images[0]["guid"] == "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+
+def test_download_inline_images_comment_source_field(tmp_path):
+    """Comment images store source_field with comment index."""
+    images = [{"url": "https://ado/_apis/wit/attachments/abc-123", "guid": "abc-123"}]
+
+    with patch("ado_search.runner.download_binary", new_callable=AsyncMock, return_value=None):
+        image_map, metadata = asyncio.run(download_work_item_inline_images(
+            400, images, data_dir=tmp_path,
+            auth_method="pat", org="https://dev.azure.com/co", pat="fake",
+            source_field="comment_0",
+        ))
+
+    assert metadata[0]["source_field"] == "comment_0"
+    assert metadata[0]["local_path"] == "attachments/400/inline/abc-123.png"
+
+
+def test_comment_image_rewrite_then_strip():
+    """Full pipeline: extract images from comment HTML, rewrite URLs, strip to text."""
+    from ado_search.markdown import strip_html
+
+    comment_html = '<p>Screenshot:</p><img src="https://dev.azure.com/co/_apis/wit/attachments/abc-def" /><p>Done</p>'
+
+    images = extract_inline_images(comment_html)
+    assert len(images) == 1
+
+    image_map = {images[0]["url"]: "attachments/100/inline/abc-def.png"}
+    rewritten = rewrite_inline_images(comment_html, image_map)
+    assert "attachments/100/inline/abc-def.png" in rewritten
+
+    text = strip_html(rewritten)
+    assert "[image: attachments/100/inline/abc-def.png]" in text
+    assert "Screenshot:" in text
+
+
 def test_download_inline_images_skips_existing(tmp_path):
     img_dir = tmp_path / "attachments" / "500" / "inline"
     img_dir.mkdir(parents=True)

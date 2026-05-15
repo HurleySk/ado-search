@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.12.0] - 2026-05-15
+
+### Added
+
+- **Comment image extraction** — inline images pasted into work item comments (screenshots, diagrams) are now downloaded and stored alongside other inline images when both `include_comments` and `include_attachments` are enabled. Images are saved to `.ado-search/attachments/{id}/inline/` and appear as `[image: path]` in comment text and in the `## Inline Images` section of `show` output. Downloads are parallel across comments, bounded by the existing concurrency semaphore.
+
 ## [1.11.1] - 2026-05-13
 
 ### Fixed

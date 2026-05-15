@@ -158,7 +158,11 @@ def work_item_to_markdown(
         for img in inline_images:
             field = img.get("source_field", "")
             path = img.get("local_path", "")
-            label = f"{field} image" if field else "image"
+            if field and field.startswith("comment_"):
+                idx = field.split("_", 1)[1]
+                label = f"comment #{int(idx) + 1} image"
+            else:
+                label = f"{field} image" if field else "image"
             lines.append(f"- {label}: {path}")
         lines.append("")
 

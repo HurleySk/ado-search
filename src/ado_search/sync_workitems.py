@@ -145,6 +145,30 @@ async def fetch_item(
         )
         img_metadata = desc_img_meta + ac_img_meta
 
+        # Extract and download inline images from comments
+        comment_images_by_index = []
+        for i, comment in enumerate(comments):
+            c_html = comment.get("text", "") or ""
+            c_images = extract_inline_images(c_html)
+            if c_images:
+                comment_images_by_index.append((i, c_images))
+
+        if comment_images_by_index:
+            comment_download_results = await asyncio.gather(*[
+                download_work_item_inline_images(
+                    item_id, c_images,
+                    data_dir=data_dir, auth_method=auth_method, org=org, pat=pat,
+                    semaphore=semaphore, source_field=f"comment_{i}",
+                )
+                for i, c_images in comment_images_by_index
+            ])
+            for (i, _), (c_map, c_img_meta) in zip(
+                comment_images_by_index, comment_download_results,
+            ):
+                img_metadata.extend(c_img_meta)
+                if c_map:
+                    comments[i]["text"] = rewrite_inline_images(comments[i]["text"], c_map)
+
         # Rewrite inline image URLs in raw HTML before prepare_work_item strips it
         if desc_map:
             fields["System.Description"] = rewrite_inline_images(desc_html, desc_map)

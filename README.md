@@ -59,6 +59,7 @@ When `include_attachments = true` in config, or `--include-attachments` is passe
 
 - **File attachments** — stored in `.ado-search/attachments/{work_item_id}/`
 - **Inline images** — images embedded in Description/Acceptance Criteria HTML, stored in `.ado-search/attachments/{work_item_id}/inline/`
+- **Comment images** — images pasted into work item comments (screenshots, diagrams), stored alongside other inline images. Requires both `include_comments` and `include_attachments` to be enabled.
 
 Attachment filenames are indexed and searchable. Inline images are referenced as `[image: path]` in text output so agents can locate them. Downloads are incremental — existing files with correct size are skipped on re-sync.
 

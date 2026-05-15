@@ -117,63 +117,49 @@ async def fetch_item(
             download_work_item_attachments, download_work_item_inline_images,
         )
 
-        # Extract attachment metadata from relations
         file_attachments = extract_attachments(raw)
-
-        # Extract inline images from raw HTML fields (before stripping)
-        fields = raw.get("fields", {})
-        desc_html = fields.get("System.Description", "") or ""
-        ac_html = fields.get("Microsoft.VSTS.Common.AcceptanceCriteria", "") or ""
-        desc_images = extract_inline_images(desc_html)
-        ac_images = extract_inline_images(ac_html)
-
-        # Download attachments and inline images
         att_metadata = await download_work_item_attachments(
             item_id, file_attachments,
             data_dir=data_dir, auth_method=auth_method, org=org, pat=pat,
             semaphore=semaphore,
         )
-        desc_map, desc_img_meta = await download_work_item_inline_images(
-            item_id, desc_images,
-            data_dir=data_dir, auth_method=auth_method, org=org, pat=pat,
-            semaphore=semaphore, source_field="description",
-        )
-        ac_map, ac_img_meta = await download_work_item_inline_images(
-            item_id, ac_images,
-            data_dir=data_dir, auth_method=auth_method, org=org, pat=pat,
-            semaphore=semaphore, source_field="acceptance_criteria",
-        )
-        img_metadata = desc_img_meta + ac_img_meta
 
-        # Extract and download inline images from comments
-        comment_images_by_index = []
+        fields = raw.get("fields", {})
+        html_sources = [
+            ("description", fields.get("System.Description", "") or ""),
+            ("acceptance_criteria", fields.get("Microsoft.VSTS.Common.AcceptanceCriteria", "") or ""),
+        ]
         for i, comment in enumerate(comments):
             c_html = comment.get("text", "") or ""
-            c_images = extract_inline_images(c_html)
-            if c_images:
-                comment_images_by_index.append((i, c_images))
+            if c_html:
+                html_sources.append((f"comment_{i}", c_html))
 
-        if comment_images_by_index:
-            comment_download_results = await asyncio.gather(*[
+        image_tasks = []
+        for source_field, html in html_sources:
+            images = extract_inline_images(html)
+            if images:
+                image_tasks.append((source_field, html, images))
+
+        if image_tasks:
+            download_results = await asyncio.gather(*[
                 download_work_item_inline_images(
-                    item_id, c_images,
+                    item_id, images,
                     data_dir=data_dir, auth_method=auth_method, org=org, pat=pat,
-                    semaphore=semaphore, source_field=f"comment_{i}",
+                    semaphore=semaphore, source_field=source_field,
                 )
-                for i, c_images in comment_images_by_index
+                for source_field, _, images in image_tasks
             ])
-            for (i, _), (c_map, c_img_meta) in zip(
-                comment_images_by_index, comment_download_results,
-            ):
-                img_metadata.extend(c_img_meta)
-                if c_map:
-                    comments[i]["text"] = rewrite_inline_images(comments[i]["text"], c_map)
-
-        # Rewrite inline image URLs in raw HTML before prepare_work_item strips it
-        if desc_map:
-            fields["System.Description"] = rewrite_inline_images(desc_html, desc_map)
-        if ac_map:
-            fields["Microsoft.VSTS.Common.AcceptanceCriteria"] = rewrite_inline_images(ac_html, ac_map)
+            for (source_field, html, _), (url_map, meta) in zip(image_tasks, download_results):
+                img_metadata.extend(meta)
+                if url_map:
+                    rewritten = rewrite_inline_images(html, url_map)
+                    if source_field == "description":
+                        fields["System.Description"] = rewritten
+                    elif source_field == "acceptance_criteria":
+                        fields["Microsoft.VSTS.Common.AcceptanceCriteria"] = rewritten
+                    elif source_field.startswith("comment_"):
+                        idx = int(source_field.split("_", 1)[1])
+                        comments[idx]["text"] = rewritten
 
     record = prepare_work_item(
         raw, comments=comments,
@@ -345,23 +331,20 @@ async def _discover_work_item_ids(
     return all_ids
 
 
-async def fetch_specific_work_items(
-    *,
+async def _fetch_and_finalize(
     item_ids: list[int],
+    *,
+    auth_method: str,
     org: str,
     project: str,
-    auth_method: str,
     pat: str = "",
     data_dir: Path,
     max_concurrent: int = 5,
-    dry_run: bool = False,
+    include_comments: bool = False,
     include_attachments: bool = False,
+    is_incremental: bool = True,
 ) -> SyncResult:
-    """Fetch specific work items by ID and merge them into the local store."""
-    if dry_run:
-        click.echo(f"Would fetch {len(item_ids)} work items: {item_ids}")
-        return {"fetched": 0, "errors": 0, "dry_run": True, "would_fetch": len(item_ids)}
-
+    """Fetch work items in parallel, write JSONL, return stats."""
     semaphore = asyncio.Semaphore(max_concurrent)
     tasks = [
         fetch_item(
@@ -371,6 +354,7 @@ async def fetch_specific_work_items(
             project=project,
             pat=pat,
             semaphore=semaphore,
+            include_comments=include_comments,
             include_attachments=include_attachments,
             data_dir=data_dir,
         )
@@ -383,13 +367,40 @@ async def fetch_specific_work_items(
     for e in errors:
         click.echo(f"  Warning: {e}", err=True)
 
-    wi_jsonl = data_dir / "work-items.jsonl"
     finalize_jsonl(
-        wi_jsonl, fetched_records,
-        key="id", sort_key="id", is_incremental=True,
+        data_dir / "work-items.jsonl", fetched_records,
+        key="id", sort_key="id", is_incremental=is_incremental,
     )
 
     return {"fetched": len(fetched_records), "errors": len(errors)}
+
+
+async def fetch_specific_work_items(
+    *,
+    item_ids: list[int],
+    org: str,
+    project: str,
+    auth_method: str,
+    pat: str = "",
+    data_dir: Path,
+    max_concurrent: int = 5,
+    dry_run: bool = False,
+    include_comments: bool = False,
+    include_attachments: bool = False,
+) -> SyncResult:
+    """Fetch specific work items by ID and merge them into the local store."""
+    if dry_run:
+        click.echo(f"Would fetch {len(item_ids)} work items: {item_ids}")
+        return {"fetched": 0, "errors": 0, "dry_run": True, "would_fetch": len(item_ids)}
+
+    return await _fetch_and_finalize(
+        item_ids,
+        auth_method=auth_method, org=org, project=project, pat=pat,
+        data_dir=data_dir, max_concurrent=max_concurrent,
+        include_comments=include_comments,
+        include_attachments=include_attachments,
+        is_incremental=True,
+    )
 
 
 async def sync_work_items(
@@ -408,7 +419,6 @@ async def sync_work_items(
     include_attachments: bool = False,
     dry_run: bool = False,
 ) -> SyncResult:
-    # OData doesn't include relations (attachments), so skip when attachments enabled
     if not include_attachments:
         from ado_search.sync_odata import sync_via_odata
 
@@ -444,32 +454,11 @@ async def sync_work_items(
         click.echo(f"Would fetch {len(item_ids)} work items: {item_ids[:20]}...")
         return {"fetched": 0, "errors": 0, "dry_run": True, "would_fetch": len(item_ids)}
 
-    semaphore = asyncio.Semaphore(max_concurrent)
-    tasks = [
-        fetch_item(
-            item_id,
-            auth_method=auth_method,
-            org=org,
-            project=project,
-            pat=pat,
-            semaphore=semaphore,
-            include_comments=include_comments,
-            include_attachments=include_attachments,
-            data_dir=data_dir,
-        )
-        for item_id in item_ids
-    ]
-
-    results = await asyncio.gather(*tasks)
-
-    fetched_records, errors = split_results(results, key="id")
-    for e in errors:
-        click.echo(f"  Warning: {e}", err=True)
-
-    wi_jsonl = data_dir / "work-items.jsonl"
-    finalize_jsonl(
-        wi_jsonl, fetched_records,
-        key="id", sort_key="id", is_incremental=bool(last_sync),
+    return await _fetch_and_finalize(
+        item_ids,
+        auth_method=auth_method, org=org, project=project, pat=pat,
+        data_dir=data_dir, max_concurrent=max_concurrent,
+        include_comments=include_comments,
+        include_attachments=include_attachments,
+        is_incremental=bool(last_sync),
     )
-
-    return {"fetched": len(fetched_records), "errors": len(errors)}

@@ -88,6 +88,15 @@ def _open_db(data_path: Path):
         db.close()
 
 
+@contextmanager
+def _conn_db(data_dir: str | None):
+    """Load connection, open DB, ensure index is current."""
+    conn = _load_conn(data_dir)
+    with _open_db(conn.data_path) as db:
+        _ensure_index(conn.data_path, db)
+        yield conn, db
+
+
 @click.group()
 @click.version_option(package_name="ado-search")
 def main():
@@ -135,12 +144,11 @@ def init(org: str, project: str, auth_method: str, pat: str | None, data_dir: st
 @click.option("--full", is_flag=True, help="Ignore last_sync and re-fetch all items")
 def sync(data_dir: str | None, dry_run: bool, include_attachments: bool, full: bool):
     """Sync work items and wiki pages from Azure DevOps."""
-    conn = _load_conn(data_dir)
-    sync_cfg = conn.cfg["sync"]
-    effective_attachments = include_attachments or sync_cfg.get("include_attachments", False)
-    last_sync = "" if full else sync_cfg.get("last_sync", "")
+    with _conn_db(data_dir) as (conn, db):
+        sync_cfg = conn.cfg["sync"]
+        effective_attachments = include_attachments or sync_cfg.get("include_attachments", False)
+        last_sync = "" if full else sync_cfg.get("last_sync", "")
 
-    with _open_db(conn.data_path) as db:
         from ado_search.sync_workitems import sync_work_items
         from ado_search.sync_wiki import sync_wiki
 
@@ -426,16 +434,24 @@ def show(item_id: str, data_dir: str | None):
 @click.option("--dry-run", is_flag=True, help="Preview without writing")
 @click.option("--include-attachments", is_flag=True, default=False,
               help="Download attachments (overrides config when set)")
+@click.option("--include-comments", is_flag=True, default=False,
+              help="Fetch comments (overrides config when set)")
 def fetch(ids: tuple[int, ...], data_dir: str | None, dry_run: bool,
-          include_attachments: bool):
+          include_attachments: bool, include_comments: bool):
     """Fetch specific work items by ID and add to local store."""
-    conn = _load_conn(data_dir)
-    effective_attachments = include_attachments or conn.cfg["sync"].get("include_attachments", False)
+    with _conn_db(data_dir) as (conn, db):
+        sync_cfg = conn.cfg["sync"]
+        effective_attachments = include_attachments or sync_cfg.get("include_attachments", False)
+        effective_comments = include_comments or sync_cfg.get("include_comments", False)
 
-    with _open_db(conn.data_path) as db:
         from ado_search.sync_workitems import fetch_specific_work_items
 
-        suffix = " (with attachments)" if effective_attachments else ""
+        suffixes = []
+        if effective_attachments:
+            suffixes.append("attachments")
+        if effective_comments:
+            suffixes.append("comments")
+        suffix = f" (with {', '.join(suffixes)})" if suffixes else ""
         click.echo(f"Fetching {len(ids)} work item(s): {list(ids)}{suffix}")
         stats = asyncio.run(fetch_specific_work_items(
             item_ids=list(ids),
@@ -444,8 +460,9 @@ def fetch(ids: tuple[int, ...], data_dir: str | None, dry_run: bool,
             auth_method=conn.auth_method,
             pat=conn.pat,
             data_dir=conn.data_path,
-            max_concurrent=conn.cfg["sync"].get("performance", {}).get("max_concurrent", 5),
+            max_concurrent=sync_cfg.get("performance", {}).get("max_concurrent", 5),
             dry_run=dry_run,
+            include_comments=effective_comments,
             include_attachments=effective_attachments,
         ))
 
@@ -478,8 +495,6 @@ def create(work_item_type, title, description, acceptance_criteria, state, reaso
            area, iteration, assigned_to, tags, priority, story_points, extra_fields,
            parent, data_dir, dry_run):
     """Create a new work item in Azure DevOps."""
-    conn = _load_conn(data_dir)
-
     from ado_search.write_workitems import create_work_item, resolve_fields, resolve_value
 
     description = resolve_value(description)
@@ -492,7 +507,7 @@ def create(work_item_type, title, description, acceptance_criteria, state, reaso
         story_points=story_points, extra_fields=extra_fields,
     )
 
-    with _open_db(conn.data_path) as db:
+    with _conn_db(data_dir) as (conn, db):
         record = asyncio.run(create_work_item(
             org=conn.org, project=conn.project,
             auth_method=conn.auth_method, pat=conn.pat,
@@ -548,9 +563,7 @@ def update(work_item_id, title, state, reason, description, acceptance_criteria,
         click.echo("Error: No fields to update. Provide at least one option.", err=True)
         raise SystemExit(1)
 
-    conn = _load_conn(data_dir)
-
-    with _open_db(conn.data_path) as db:
+    with _conn_db(data_dir) as (conn, db):
         record = asyncio.run(update_work_item(
             org=conn.org, project=conn.project,
             auth_method=conn.auth_method, pat=conn.pat,
@@ -585,9 +598,8 @@ def add_comment_cmd(work_item_id, text, data_dir, dry_run, no_mentions):
     from ado_search.write_workitems import add_comment, resolve_value
 
     text = resolve_value(text)
-    conn = _load_conn(data_dir)
 
-    with _open_db(conn.data_path) as db:
+    with _conn_db(data_dir) as (conn, db):
         record = asyncio.run(add_comment(
             org=conn.org, project=conn.project,
             auth_method=conn.auth_method, pat=conn.pat,
@@ -618,9 +630,7 @@ def add_link_cmd(source_id, target_id, link_type, comment, data_dir, dry_run):
     """
     from ado_search.write_workitems import add_link
 
-    conn = _load_conn(data_dir)
-
-    with _open_db(conn.data_path) as db:
+    with _conn_db(data_dir) as (conn, db):
         record = asyncio.run(add_link(
             org=conn.org, project=conn.project,
             auth_method=conn.auth_method, pat=conn.pat,
@@ -651,9 +661,7 @@ def remove_link_cmd(source_id, target_id, link_type, data_dir, dry_run):
     """
     from ado_search.write_workitems import remove_link
 
-    conn = _load_conn(data_dir)
-
-    with _open_db(conn.data_path) as db:
+    with _conn_db(data_dir) as (conn, db):
         record = asyncio.run(remove_link(
             org=conn.org, project=conn.project,
             auth_method=conn.auth_method, pat=conn.pat,
@@ -766,9 +774,7 @@ def upload_attachment_cmd(work_item_id, file_path, dry_run, data_dir):
     """Upload a file as an attachment to an Azure DevOps work item."""
     from ado_search.upload_attachment import upload_attachment
 
-    conn = _load_conn(data_dir)
-
-    with _open_db(conn.data_path) as db:
+    with _conn_db(data_dir) as (conn, db):
         result = asyncio.run(upload_attachment(
             work_item_id, Path(file_path),
             org=conn.org, project=conn.project,

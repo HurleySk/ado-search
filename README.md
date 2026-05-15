@@ -71,6 +71,9 @@ Use `--include-attachments` on `fetch` or `sync` for per-invocation attachment d
 # Fetch specific items with their attachments
 ado-search fetch 73541 --include-attachments
 
+# Fetch with comments (captures comment images when combined with attachments)
+ado-search fetch 73541 --include-comments --include-attachments
+
 # One-time full sync with attachments
 ado-search sync --include-attachments
 ```

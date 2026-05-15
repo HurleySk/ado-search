@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.12.1] - 2026-05-15
+
+### Added
+
+- **`--include-comments` flag on `fetch`** -- fetch comments for specific work items without changing config. When combined with `--include-attachments`, comment images are also downloaded.
+
+### Changed
+
+- **Refactored inline image extraction** -- consolidated 3 near-identical extract/download/rewrite blocks in `fetch_item()` into a single loop over HTML sources (description, acceptance criteria, comments). All sources download in parallel.
+- **Extracted `_fetch_and_finalize()` helper** -- shared by `fetch_specific_work_items()` and `sync_work_items()`, eliminating duplicated gather/split/finalize logic.
+- **CLI boilerplate reduction** -- added `_conn_db()` context manager replacing repeated `_load_conn` + `_open_db` + `_ensure_index` calls across 8 commands.
+
 ## [1.12.0] - 2026-05-15
 
 ### Added

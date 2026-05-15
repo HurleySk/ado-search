@@ -59,7 +59,7 @@ When `include_attachments = true` in config, or `--include-attachments` is passe
 
 - **File attachments** — stored in `.ado-search/attachments/{work_item_id}/`
 - **Inline images** — images embedded in Description/Acceptance Criteria HTML, stored in `.ado-search/attachments/{work_item_id}/inline/`
-- **Comment images** — images pasted into work item comments (screenshots, diagrams), stored alongside other inline images. Requires both `include_comments` and `include_attachments` to be enabled.
+- **Comment images** -- images pasted into work item comments (screenshots, diagrams), stored alongside other inline images. `fetch --include-attachments` automatically enables comment fetching to capture these.
 
 Attachment filenames are indexed and searchable. Inline images are referenced as `[image: path]` in text output so agents can locate them. Downloads are incremental — existing files with correct size are skipped on re-sync.
 
@@ -68,11 +68,8 @@ Note: attachments require the WIQL/REST sync path (OData doesn't include relatio
 Use `--include-attachments` on `fetch` or `sync` for per-invocation attachment downloads without changing config:
 
 ```bash
-# Fetch specific items with their attachments
+# Fetch specific items with their attachments (also fetches comment images)
 ado-search fetch 73541 --include-attachments
-
-# Fetch with comments (captures comment images when combined with attachments)
-ado-search fetch 73541 --include-comments --include-attachments
 
 # One-time full sync with attachments
 ado-search sync --include-attachments

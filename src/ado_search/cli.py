@@ -443,6 +443,8 @@ def fetch(ids: tuple[int, ...], data_dir: str | None, dry_run: bool,
         sync_cfg = conn.cfg["sync"]
         effective_attachments = include_attachments or sync_cfg.get("include_attachments", False)
         effective_comments = include_comments or sync_cfg.get("include_comments", False)
+        if effective_attachments:
+            effective_comments = True
 
         from ado_search.sync_workitems import fetch_specific_work_items
 

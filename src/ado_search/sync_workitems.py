@@ -126,7 +126,7 @@ async def fetch_item(
 
         fields = raw.get("fields", {})
         html_sources = [
-            ("description", fields.get("System.Description", "") or ""),
+            ("description", fields.get("System.Description", "") or fields.get("Microsoft.VSTS.TCM.ReproSteps", "") or ""),
             ("acceptance_criteria", fields.get("Microsoft.VSTS.Common.AcceptanceCriteria", "") or ""),
         ]
         for i, comment in enumerate(comments):

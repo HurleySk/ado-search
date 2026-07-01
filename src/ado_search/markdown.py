@@ -55,7 +55,7 @@ def extract_work_item_metadata(raw: dict) -> dict:
     tags_raw = fields.get("System.Tags", "")
     tags = ",".join(t.strip() for t in tags_raw.split(";") if t.strip())
 
-    description = strip_html(fields.get("System.Description", ""))
+    description = strip_html(fields.get("System.Description", "") or fields.get("Microsoft.VSTS.TCM.ReproSteps", ""))
     snippet = make_snippet(description)
 
     created_raw = fields.get("System.CreatedDate", "")

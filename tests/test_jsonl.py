@@ -99,6 +99,32 @@ def test_read_jsonl_item_missing_file(tmp_path):
     assert read_jsonl_item(path, key="id", value=1) is None
 
 
+def test_iter_jsonl_skips_bad_lines(tmp_path, capsys):
+    path = tmp_path / "items.jsonl"
+    path.write_text(
+        '{"id": 1, "title": "A"}\nNOT VALID JSON\n{"id": 2, "title": "B"}\n',
+        encoding="utf-8",
+    )
+    items = list(iter_jsonl(path))
+    assert len(items) == 2
+    assert items[0] == {"id": 1, "title": "A"}
+    assert items[1] == {"id": 2, "title": "B"}
+    captured = capsys.readouterr()
+    assert "Warning: skipping malformed JSON at items.jsonl:2" in captured.err
+
+
+def test_read_jsonl_skips_bad_lines(tmp_path, capsys):
+    path = tmp_path / "items.jsonl"
+    path.write_text(
+        '{"id": 1, "title": "A"}\n{truncated\n{"id": 2, "title": "B"}\n',
+        encoding="utf-8",
+    )
+    result = read_jsonl(path, key="id")
+    assert result == {1: {"id": 1, "title": "A"}, 2: {"id": 2, "title": "B"}}
+    captured = capsys.readouterr()
+    assert "Warning: skipping malformed JSON at items.jsonl:2" in captured.err
+
+
 from ado_search.sync_common import prepare_work_item
 
 

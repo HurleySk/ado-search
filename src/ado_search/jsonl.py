@@ -4,20 +4,25 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 
 def iter_jsonl(path: Path) -> Iterator[dict]:
-    """Yield items from a JSONL file one at a time."""
+    """Yield items from a JSONL file one at a time, skipping malformed lines."""
     if not path.exists():
         return
     with path.open(encoding="utf-8") as f:
-        for line in f:
+        for line_num, line in enumerate(f, 1):
             line = line.strip()
-            if line:
+            if not line:
+                continue
+            try:
                 yield json.loads(line)
+            except json.JSONDecodeError as e:
+                print(f"Warning: skipping malformed JSON at {path.name}:{line_num}: {e}", file=sys.stderr)
 
 
 def read_jsonl(path: Path, *, key: str) -> dict[Any, dict]:

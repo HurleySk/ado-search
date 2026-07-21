@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.12.4] - 2026-07-21
+
+### Fixed
+
+- **JSONL index resilience** — `iter_jsonl()` now catches `JSONDecodeError` on individual lines and continues, printing a warning to stderr. Previously a single malformed line (from a truncated write, merge artifact, or encoding issue) caused the entire reindex to fail silently, leaving the SQLite index empty or stale. Fixes #3.
+
+## [1.12.3] - 2026-07-01
+
+### Fixed
+
+- **Capture ReproSteps field for Bug work items** — Bug work items now fall back to `Microsoft.VSTS.TCM.ReproSteps` when `System.Description` is empty, ensuring repro steps are captured in the description field.
+
+## [1.12.2] - 2026-05-15
+
+### Fixed
+
+- **Auto-enable comment fetching when attachments requested** — when `--include-attachments` is set, comment fetching is now automatically enabled so that inline images embedded in comments are downloaded.
+
 ## [1.12.1] - 2026-05-15
 
 ### Added

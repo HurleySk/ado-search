@@ -426,6 +426,33 @@ def test_get_filtered_ids_with_multiple_filters(tmp_path):
     db.close()
 
 
+def test_reindex_skips_bad_jsonl_lines(tmp_path):
+    import json
+    db = Database(tmp_path / "index.db")
+    db.initialize()
+    wi_path = tmp_path / "work-items.jsonl"
+    wiki_path = tmp_path / "wiki-pages.jsonl"
+    wi_path.write_text(
+        json.dumps({"id": 1, "title": "Before Bad", "type": "Bug", "state": "Active",
+                     "area": "A", "iteration": "I", "assigned_to": "", "tags": "",
+                     "priority": 1, "parent_id": None, "created": "2025-01-01",
+                     "updated": "2025-01-02", "description": "desc", "acceptance_criteria": ""}) + "\n"
+        + "NOT VALID JSON\n"
+        + json.dumps({"id": 2, "title": "After Bad", "type": "Task", "state": "New",
+                       "area": "B", "iteration": "I", "assigned_to": "", "tags": "",
+                       "priority": 2, "parent_id": None, "created": "2025-01-01",
+                       "updated": "2025-01-02", "description": "desc2", "acceptance_criteria": ""}) + "\n",
+        encoding="utf-8",
+    )
+    wiki_path.write_text("", encoding="utf-8")
+    db.reindex_from_jsonl(wi_path, wiki_path)
+    assert db.get_work_item(1) is not None
+    assert db.get_work_item(1)["title"] == "Before Bad"
+    assert db.get_work_item(2) is not None
+    assert db.get_work_item(2)["title"] == "After Bad"
+    db.close()
+
+
 def test_reindex_includes_attachment_filenames_in_search(tmp_path):
     import json
     db = Database(tmp_path / "index.db")

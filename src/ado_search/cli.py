@@ -101,9 +101,7 @@ def _conn_db(data_dir: str | None):
 @click.version_option(package_name="ado-search")
 def main():
     """Sync and search Azure DevOps data for AI agents."""
-    # Windows stdio defaults to cp1252, but ADO content routinely contains
-    # characters outside it (arrows, em dashes, smart quotes). Without this,
-    # writing such an item raises UnicodeEncodeError.
+    # Windows stdio defaults to cp1252; ADO content is not.
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")

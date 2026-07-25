@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.12.5] - 2026-07-25
+
+### Fixed
+
+- **`show <id>` reported "not found" for items containing non-cp1252 characters** -- `UnicodeEncodeError` subclasses `ValueError`, so the broad `except ValueError` around the work-item branch of `show` swallowed encoding failures and fell through to the wiki lookup. Items present in both `index.db` and `work-items.jsonl` appeared to be missing. The `try/except` is now narrowed to the `int(item_id)` conversion it was meant for, and stdout/stderr are reconfigured to UTF-8 with `errors="replace"` since Windows defaults to cp1252.
+
 ## [1.12.4] - 2026-07-21
 
 ### Fixed

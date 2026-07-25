@@ -101,7 +101,14 @@ def _conn_db(data_dir: str | None):
 @click.version_option(package_name="ado-search")
 def main():
     """Sync and search Azure DevOps data for AI agents."""
-    pass
+    # Windows stdio defaults to cp1252, but ADO content routinely contains
+    # characters outside it (arrows, em dashes, smart quotes). Without this,
+    # writing such an item raises UnicodeEncodeError.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
 
 
 @main.command()
@@ -379,6 +386,10 @@ def show(item_id: str, data_dir: str | None):
         # Try as work item ID
         try:
             wi_id = int(item_id)
+        except ValueError:
+            wi_id = None
+
+        if wi_id is not None:
             item = db.get_work_item(wi_id)
             if item:
                 from ado_search.markdown import make_snippet, work_item_to_markdown
@@ -412,8 +423,6 @@ def show(item_id: str, data_dir: str | None):
                 )
                 click.echo(md)
                 return
-        except ValueError:
-            pass
 
         # Try as wiki path
         wiki_path = item_id if item_id.startswith("/") else f"/{item_id}"

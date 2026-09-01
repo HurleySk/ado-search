@@ -33,7 +33,7 @@ class GrepResult:
 
 _SIMPLE_FIELDS = {
     "title", "description", "acceptance_criteria", "tags",
-    "assigned_to", "area", "iteration",
+    "assigned_to", "area", "iteration", "dev_notes", "notes",
 }
 
 
@@ -103,7 +103,7 @@ def match_field(
     return results
 
 
-DEFAULT_FIELDS = ["title", "description", "comments"]
+DEFAULT_FIELDS = ["title", "description", "dev_notes", "notes", "comments"]
 
 
 def grep_work_items(

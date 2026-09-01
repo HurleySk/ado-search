@@ -293,3 +293,10 @@ def test_format_compact_summary_plural():
     output = format_grep_results([r1, r2], fmt="compact")
     assert "2 items matched" in output
     assert "3 total matches" in output
+
+
+def test_extract_field_text_custom_notes():
+    item = {"id": 1, "dev_notes": "alm_docketnamereplacement", "notes": "client note"}
+    assert extract_field_text(item, "dev_notes") == [("alm_docketnamereplacement", None, None)]
+    assert extract_field_text(item, "notes") == [("client note", None, None)]
+    assert extract_field_text({"id": 2}, "dev_notes") == []

@@ -482,3 +482,91 @@ def test_reindex_includes_attachment_filenames_in_search(tmp_path):
     results = db.search_work_items("repro-steps.docx")
     assert len(results) == 1
     db.close()
+
+
+def test_upsert_work_item_stores_custom_notes(tmp_path):
+    db = Database(tmp_path / "index.db")
+    db.initialize()
+    db.upsert_work_item({
+        "id": 1, "title": "Test", "type": "Bug", "state": "Active",
+        "area": "A", "iteration": "I", "assigned_to": "u@e.com",
+        "tags": "t1", "priority": 1, "parent_id": None,
+        "created": "2025-01-01", "updated": "2025-01-02",
+        "description_snippet": "short", "description": "desc",
+        "acceptance_criteria": "ac",
+        "dev_notes": "use alm_docketnamereplacement", "notes": "client note",
+    })
+    item = db.get_work_item(1)
+    assert item["dev_notes"] == "use alm_docketnamereplacement"
+    assert item["notes"] == "client note"
+    db.close()
+
+
+def test_upsert_work_item_without_custom_notes(tmp_path):
+    db = Database(tmp_path / "index.db")
+    db.initialize()
+    db.upsert_work_item({
+        "id": 2, "title": "Test", "type": "Bug", "state": "Active",
+        "area": "A", "iteration": "I", "assigned_to": "",
+        "tags": "", "priority": None, "parent_id": None,
+        "created": "2025-01-01", "updated": "2025-01-02",
+        "description_snippet": "short",
+    })
+    item = db.get_work_item(2)
+    assert item["dev_notes"] == ""
+    assert item["notes"] == ""
+    db.close()
+
+
+def test_initialize_migrates_legacy_schema(tmp_path):
+    import sqlite3
+
+    db_path = tmp_path / "index.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript("""
+        CREATE TABLE work_items (
+            id INTEGER PRIMARY KEY,
+            title TEXT NOT NULL,
+            type TEXT NOT NULL,
+            state TEXT NOT NULL,
+            area TEXT,
+            iteration TEXT,
+            assigned_to TEXT,
+            tags TEXT,
+            priority INTEGER,
+            parent_id INTEGER,
+            created TEXT,
+            updated TEXT
+        );
+    """)
+    conn.commit()
+    conn.close()
+
+    db = Database(db_path)
+    db.initialize()
+    cols = {r[1] for r in db._connect().execute("PRAGMA table_info(work_items)")}
+    assert {"dev_notes", "notes"} <= cols
+    db.close()
+
+
+def test_reindex_indexes_custom_notes(tmp_path):
+    import json
+
+    wi = tmp_path / "work-items.jsonl"
+    wiki = tmp_path / "wiki-pages.jsonl"
+    wi.write_text(json.dumps({
+        "id": 7, "title": "Subject mapping", "type": "Bug", "state": "Active",
+        "area": "A", "iteration": "I", "assigned_to": "", "tags": "",
+        "priority": None, "parent_id": None, "created": "2025-01-01",
+        "updated": "2025-01-02", "description": "desc", "acceptance_criteria": "",
+        "dev_notes": "use alm_docketnamereplacement", "notes": "",
+    }) + "\n", encoding="utf-8")
+    wiki.write_text("", encoding="utf-8")
+
+    db = Database(tmp_path / "index.db")
+    db.initialize()
+    db.reindex_from_jsonl(wi, wiki)
+    assert db.get_work_item(7)["dev_notes"] == "use alm_docketnamereplacement"
+    results = db.search_work_items("alm_docketnamereplacement")
+    assert [r["id"] for r in results] == [7]
+    db.close()

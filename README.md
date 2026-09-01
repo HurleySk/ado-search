@@ -49,7 +49,7 @@ The SQLite index (`index.db`) is `.gitignore`d — it auto-rebuilds from JSONL o
 
 ## Synced Fields
 
-Each work item includes: id, title, type, state, area, iteration, assigned_to, tags, priority, parent_id, created, updated, description, acceptance_criteria, story_points, state_history, attachments, and inline_images.
+Each work item includes: id, title, type, state, area, iteration, assigned_to, tags, priority, parent_id, created, updated, description, acceptance_criteria, dev_notes (`Custom.DevelopmentNotes`), notes (`Custom.Notes`), story_points, state_history, attachments, and inline_images.
 
 Story points are sourced from `StoryPoints` or `Effort` fields. State history tracks every state change (e.g., New → Active → Resolved → Closed) with date and author.
 
@@ -236,7 +236,7 @@ ado-search grep 'https?://\S+' --type Bug --state Active --brief
 ado-search grep 'TODO|FIXME' --format json
 ```
 
-Default fields searched: title, description, comments. Use `--field` / `-f` to scope to specific fields (`title`, `description`, `acceptance_criteria`, `comments`, `tags`, `assigned_to`, `area`, `iteration`, `state_history`).
+Default fields searched: title, description, dev_notes, notes, comments. Use `--field` / `-f` to scope to specific fields (`title`, `description`, `acceptance_criteria`, `dev_notes`, `notes`, `comments`, `tags`, `assigned_to`, `area`, `iteration`, `state_history`).
 
 Metadata pre-filters (`--type`, `--state`, `--area`, `--assigned-to`, `--tag`) narrow candidates via SQLite indexes before the regex scan. Exit codes follow grep convention: 0 = matches found, 1 = no matches, 2 = error.
 

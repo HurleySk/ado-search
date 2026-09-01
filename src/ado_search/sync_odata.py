@@ -8,6 +8,7 @@ from urllib.parse import quote, urlparse
 import click
 
 from ado_search.auth import OP_ODATA_QUERY
+from ado_search.markdown import CUSTOM_TEXT_FIELDS
 from ado_search.runner import SyncResult, run_operation
 from ado_search.sync_common import finalize_jsonl, prepare_work_item
 
@@ -21,6 +22,8 @@ ODATA_SELECT = ",".join([
     "ParentWorkItemId", "StoryPoints",
     "Microsoft_VSTS_Common_ClosedDate",
 ])
+
+ODATA_CUSTOM_SELECT = [f.replace(".", "_") for f in CUSTOM_TEXT_FIELDS]
 
 ODATA_EXPAND = ",".join([
     "Area($select=AreaPath)",
@@ -39,6 +42,7 @@ def build_odata_url(
     last_sync: str,
     top: int = ODATA_PAGE_SIZE,
     skip: int = 0,
+    extra_select: list[str] | None = None,
 ) -> str:
     """Build an OData analytics URL for querying WorkItems."""
     # Extract org name from URL (e.g., "pcxhub-acms" from "https://dev.azure.com/pcxhub-acms")
@@ -71,7 +75,10 @@ def build_odata_url(
 
     # Build query string manually so we control encoding
     params: list[str] = []
-    params.append(f"$select={quote(ODATA_SELECT, safe=',')}")
+    select = ODATA_SELECT
+    if extra_select:
+        select = ",".join([select, *extra_select])
+    params.append(f"$select={quote(select, safe=',')}")
     params.append(f"$expand={quote(ODATA_EXPAND, safe=',$()/')}")
     params.append(f"$top={top}")
     params.append(f"$skip={skip}")
@@ -113,6 +120,10 @@ def odata_to_ado_format(odata_item: dict) -> dict:
             "Microsoft.VSTS.Common.AcceptanceCriteria": odata_item.get("Microsoft_VSTS_Common_AcceptanceCriteria", "") or "",
             "Microsoft.VSTS.Scheduling.StoryPoints": odata_item.get("StoryPoints"),
             "Microsoft.VSTS.Common.ClosedDate": odata_item.get("Microsoft_VSTS_Common_ClosedDate", ""),
+            **{
+                ado_field: odata_item.get(ado_field.replace(".", "_"), "") or ""
+                for ado_field in CUSTOM_TEXT_FIELDS
+            },
         },
     }
 
@@ -131,22 +142,34 @@ async def sync_via_odata(
     dry_run: bool = False,
 ) -> SyncResult | None:
     """Sync work items via OData analytics. Returns stats dict or None if OData unavailable."""
-    url = build_odata_url(
-        org, project,
-        work_item_types=work_item_types,
-        area_paths=area_paths,
-        states=states,
-        last_sync=last_sync,
-    )
+    def _url(extra_select: list[str] | None) -> str:
+        return build_odata_url(
+            org, project,
+            work_item_types=work_item_types,
+            area_paths=area_paths,
+            states=states,
+            last_sync=last_sync,
+            extra_select=extra_select,
+        )
+
+    async def _probe(url: str):
+        return await run_operation(
+            auth_method, OP_ODATA_QUERY, org=org, project=project, pat=pat, url=url, retries=1,
+        )
+
+    def _is_unavailable(stderr: str) -> bool:
+        lowered = stderr.lower()
+        return any(s in lowered for s in ["403", "401", "forbidden", "unauthorized", "not available"])
 
     # Probe first page to check if OData is available
-    result = await run_operation(
-        auth_method, OP_ODATA_QUERY, org=org, project=project, pat=pat, url=url, retries=1,
-    )
+    result = await _probe(_url(ODATA_CUSTOM_SELECT))
+
+    if result.returncode != 0 and not _is_unavailable(result.stderr):
+        click.echo("  Custom fields unavailable in analytics, retrying without them...")
+        result = await _probe(_url(None))
 
     if result.returncode != 0:
-        stderr_lower = result.stderr.lower()
-        if any(s in stderr_lower for s in ["403", "401", "forbidden", "unauthorized", "not available"]):
+        if _is_unavailable(result.stderr):
             return None  # OData not available — signal fallback
         raise RuntimeError(f"OData query failed: {result.stderr}")
 

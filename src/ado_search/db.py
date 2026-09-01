@@ -14,6 +14,8 @@ def _sanitize_fts_query(query: str) -> str:
 
 _BATCH_CHUNK = 500  # stay under SQLite's SQLITE_MAX_VARIABLE_NUMBER limit
 
+_SNIPPET_EXTRA_FIELDS = {"dev_notes": "dev notes", "notes": "notes"}
+
 
 class Database:
     def __init__(self, path: Path):
@@ -64,7 +66,9 @@ class Database:
                 updated TEXT,
                 description TEXT DEFAULT '',
                 acceptance_criteria TEXT DEFAULT '',
-                story_points REAL DEFAULT NULL
+                story_points REAL DEFAULT NULL,
+                dev_notes TEXT DEFAULT '',
+                notes TEXT DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS wiki_pages (
@@ -104,6 +108,8 @@ class Database:
             ("acceptance_criteria", "TEXT", "''"),
             ("story_points", "REAL", "NULL"),
             ("closed_date", "TEXT", "''"),
+            ("dev_notes", "TEXT", "''"),
+            ("notes", "TEXT", "''"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE work_items ADD COLUMN {col} {col_type} DEFAULT {default}")
@@ -134,8 +140,9 @@ class Database:
             """INSERT INTO work_items
                (id, title, type, state, area, iteration, assigned_to, tags,
                 priority, parent_id, closed_date, created, updated,
-                description, acceptance_criteria, story_points)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                description, acceptance_criteria, story_points,
+                dev_notes, notes)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                 title=excluded.title, type=excluded.type, state=excluded.state,
                 area=excluded.area, iteration=excluded.iteration,
@@ -145,7 +152,8 @@ class Database:
                 created=excluded.created, updated=excluded.updated,
                 description=excluded.description,
                 acceptance_criteria=excluded.acceptance_criteria,
-                story_points=excluded.story_points
+                story_points=excluded.story_points,
+                dev_notes=excluded.dev_notes, notes=excluded.notes
             """,
             (
                 item["id"], item["title"], item["type"], item["state"],
@@ -155,6 +163,7 @@ class Database:
                 item["created"], item["updated"],
                 item.get("description", ""), item.get("acceptance_criteria", ""),
                 item.get("story_points"),
+                item.get("dev_notes", ""), item.get("notes", ""),
             ),
         )
         self._upsert_fts(conn, "work_item", str(item["id"]),
@@ -428,6 +437,10 @@ class Database:
                     )
                     if att_names:
                         snippet = f"{snippet} [attachments: {att_names}]"
+                    for key, label in _SNIPPET_EXTRA_FIELDS.items():
+                        extra = item.get(key) or ""
+                        if extra:
+                            snippet = f"{snippet} [{label}: {make_snippet(extra)}]"
                     item.setdefault("description_snippet", snippet)
                     self.upsert_work_item(item)
                     if item.get("state_history"):

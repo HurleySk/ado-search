@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from ado_search.jsonl import read_jsonl, write_jsonl
-from ado_search.sync_common import finalize_jsonl, split_results
+from ado_search.sync_common import finalize_jsonl, prepare_work_item, split_results
 
 
 def test_split_results_separates_records_and_errors():
@@ -83,3 +83,23 @@ def test_finalize_jsonl_no_existing_file(tmp_path):
     )
     items = read_jsonl(jsonl, key="id")
     assert items == {1: {"id": 1, "v": "new"}}
+
+
+def test_prepare_work_item_captures_custom_notes():
+    raw = {
+        "id": 75542,
+        "fields": {
+            "System.Title": "T",
+            "Custom.DevelopmentNotes": "<p>Use alm_docketnamereplacement</p>",
+            "Custom.Notes": "<p>Client note</p>",
+        },
+    }
+    record = prepare_work_item(raw)
+    assert record["dev_notes"] == "Use alm_docketnamereplacement"
+    assert record["notes"] == "Client note"
+
+
+def test_prepare_work_item_custom_notes_absent():
+    record = prepare_work_item({"id": 1, "fields": {"System.Title": "T"}})
+    assert record["dev_notes"] == ""
+    assert record["notes"] == ""

@@ -29,6 +29,16 @@ class _HTMLStripper(HTMLParser):
 
 SNIPPET_LENGTH = 500
 
+CUSTOM_TEXT_FIELDS: dict[str, str] = {
+    "Custom.DevelopmentNotes": "dev_notes",
+    "Custom.Notes": "notes",
+}
+
+CUSTOM_FIELD_HEADINGS: dict[str, str] = {
+    "dev_notes": "Dev Notes",
+    "notes": "Notes",
+}
+
 
 def make_snippet(text: str) -> str:
     """Create a description snippet from text."""
@@ -62,6 +72,10 @@ def extract_work_item_metadata(raw: dict) -> dict:
     updated_raw = fields.get("System.ChangedDate", "")
 
     sp = fields.get("Microsoft.VSTS.Scheduling.StoryPoints")
+    custom = {
+        key: strip_html(fields.get(ado_field, "") or "")
+        for ado_field, key in CUSTOM_TEXT_FIELDS.items()
+    }
     return {
         "id": raw["id"],
         "title": fields.get("System.Title", ""),
@@ -80,6 +94,7 @@ def extract_work_item_metadata(raw: dict) -> dict:
         "description_snippet": snippet,
         "description_full": description,
         "acceptance_criteria": strip_html(fields.get("Microsoft.VSTS.Common.AcceptanceCriteria", "")),
+        **custom,
     }
 
 
@@ -130,6 +145,13 @@ def work_item_to_markdown(
         lines.append("## Acceptance Criteria")
         lines.append(meta["acceptance_criteria"])
         lines.append("")
+
+    for key, heading in CUSTOM_FIELD_HEADINGS.items():
+        value = meta.get(key) or ""
+        if value:
+            lines.append(f"## {heading}")
+            lines.append(value)
+            lines.append("")
 
     if comments:
         lines.append("## Comments")

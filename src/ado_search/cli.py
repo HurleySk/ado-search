@@ -238,8 +238,8 @@ def search_cmd(query, type_filter, state_filter, area_filter, assigned_to, tag_f
 
 
 VALID_GREP_FIELDS = [
-    "title", "description", "acceptance_criteria", "comments",
-    "tags", "assigned_to", "area", "iteration", "state_history",
+    "title", "description", "acceptance_criteria", "dev_notes", "notes",
+    "comments", "tags", "assigned_to", "area", "iteration", "state_history",
 ]
 
 
@@ -247,7 +247,7 @@ VALID_GREP_FIELDS = [
 @click.argument("pattern")
 @click.option("--field", "-f", "fields", multiple=True,
               type=click.Choice(VALID_GREP_FIELDS, case_sensitive=False),
-              help="Fields to search (repeatable, default: title,description,comments)")
+              help="Fields to search (repeatable, default: title,description,dev_notes,notes,comments)")
 @click.option("--type", "-t", "type_filter", default=None, help="Filter by work item type")
 @click.option("--state", "-s", "state_filter", default=None, help="Filter by state")
 @click.option("--area", "-a", "area_filter", default=None, help="Filter by area path (prefix)")

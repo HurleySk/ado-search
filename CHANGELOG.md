@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.13.0] - 2026-09-01
+
+### Added
+
+- **Custom notes fields captured** -- `Custom.DevelopmentNotes` ("Dev Notes") and `Custom.Notes` ("Notes") are now extracted into the `dev_notes` and `notes` record keys, stored in `index.db`, indexed for FTS search, greppable via `--field dev_notes` / `--field notes` (both are also in the default grep field set), and rendered by `show` as `## Dev Notes` and `## Notes` sections when non-empty. HTML is stripped the same way as `description`. The mapping lives in `markdown.CUSTOM_TEXT_FIELDS`, so adding another custom text field is a one-line change. Work items and projects without these fields are unaffected -- the values default to empty and no section is rendered.
+
+### Changed
+
+- **OData fast path requests the custom fields, degrading gracefully** -- the analytics probe now selects `Custom_DevelopmentNotes` and `Custom_Notes`; if the project does not expose them, the probe is retried once without them instead of falling back to the slow WIQL path.
+- **`work_items` schema migration** -- `dev_notes` and `notes` columns are added to existing databases via the existing `ALTER TABLE` migration loop. The index is rebuilt from JSONL whenever the JSONL is newer, so no manual reindex is needed.
+
 ## [1.12.5] - 2026-07-25
 
 ### Fixed

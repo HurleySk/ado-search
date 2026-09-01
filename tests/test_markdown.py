@@ -87,3 +87,58 @@ def test_strip_html_preserves_rewritten_img():
     html = '<p>See image:</p><img src="attachments/1/inline/abc.png" /><p>End</p>'
     text = strip_html(html)
     assert "[image: attachments/1/inline/abc.png]" in text
+
+
+def test_extract_custom_notes_fields():
+    raw = {
+        "id": 1,
+        "fields": {
+            "System.Title": "T",
+            "Custom.DevelopmentNotes": "<div>The Subject field has changed&nbsp;from&nbsp;alm_subject&gt;alm_docketnamereplacement</div>",
+            "Custom.Notes": "<p>Client note</p>",
+        },
+    }
+    meta = extract_work_item_metadata(raw)
+    assert "The Subject field has changed" in meta["dev_notes"]
+    assert "<div>" not in meta["dev_notes"]
+    assert "&gt;" not in meta["dev_notes"]
+    assert meta["notes"] == "Client note"
+
+
+def test_extract_custom_notes_fields_absent():
+    meta = extract_work_item_metadata({"id": 2, "fields": {"System.Title": "T"}})
+    assert meta["dev_notes"] == ""
+    assert meta["notes"] == ""
+
+
+def test_work_item_to_markdown_renders_notes_sections():
+    raw = {
+        "id": 3,
+        "fields": {
+            "System.Title": "T",
+            "Custom.DevelopmentNotes": "<p>Use alm_docketnamereplacement</p>",
+            "Custom.Notes": "<p>Approved by QA</p>",
+        },
+    }
+    md = work_item_to_markdown(raw)
+    assert "## Dev Notes" in md
+    assert "Use alm_docketnamereplacement" in md
+    assert "## Notes" in md
+    assert "Approved by QA" in md
+
+
+def test_work_item_to_markdown_omits_empty_notes_sections():
+    md = work_item_to_markdown({"id": 4, "fields": {"System.Title": "T"}})
+    assert "## Dev Notes" not in md
+    assert "## Notes" not in md
+
+
+def test_work_item_to_markdown_from_db_meta_without_notes_keys():
+    meta = {
+        "id": 5, "title": "T", "type": "Bug", "state": "New", "area": "",
+        "iteration": "", "assigned_to": "", "tags": "", "priority": None,
+        "parent_id": None, "created": "", "updated": "",
+        "description_full": "d", "acceptance_criteria": "",
+    }
+    md = work_item_to_markdown({}, meta=meta)
+    assert "## Dev Notes" not in md

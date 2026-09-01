@@ -7,7 +7,7 @@ from typing import Any
 import click
 
 from ado_search.jsonl import merge_jsonl, read_jsonl, write_jsonl
-from ado_search.markdown import extract_work_item_metadata, strip_html
+from ado_search.markdown import CUSTOM_TEXT_FIELDS, extract_work_item_metadata, strip_html
 
 
 
@@ -38,6 +38,8 @@ def prepare_work_item(
         "description": meta["description_full"],
         "acceptance_criteria": meta["acceptance_criteria"],
     }
+    for key in CUSTOM_TEXT_FIELDS.values():
+        record[key] = meta.get(key, "")
     if comments:
         record["comments"] = [
             {

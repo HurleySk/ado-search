@@ -201,12 +201,13 @@ def sync(data_dir: str | None, dry_run: bool, include_attachments: bool, full: b
 @click.option("--area", "area_filter", default=None, help="Filter by area path (prefix match)")
 @click.option("--assigned-to", default=None, help="Filter by assignee email")
 @click.option("--tag", "tag_filter", default=None, help="Filter by tag")
+@click.option("--project", "project_filter", default=None, help="Filter by project")
 @click.option("--limit", default=20, type=int, help="Max results (default 20)")
 @click.option("--format", "fmt", type=click.Choice(["compact", "detail", "json", "paths"]),
               default="compact", help="Output format")
 @click.option("--data-dir", type=click.Path(), default=None)
 def search_cmd(query, type_filter, state_filter, area_filter, assigned_to, tag_filter,
-               limit, fmt, data_dir):
+               project_filter, limit, fmt, data_dir):
     """Search indexed Azure DevOps data."""
     data_path = Path(data_dir) if data_dir else _default_data_dir()
 
@@ -224,7 +225,7 @@ def search_cmd(query, type_filter, state_filter, area_filter, assigned_to, tag_f
             db, query, data_dir=data_path,
             type_filter=type_filter, state_filter=state_filter,
             area_filter=area_filter, assigned_to_filter=assigned_to,
-            tag_filter=tag_filter, limit=limit,
+            tag_filter=tag_filter, project_filter=project_filter, limit=limit,
         )
 
         if not results:
@@ -253,6 +254,7 @@ VALID_GREP_FIELDS = [
 @click.option("--area", "-a", "area_filter", default=None, help="Filter by area path (prefix)")
 @click.option("--assigned-to", default=None, help="Filter by assignee email")
 @click.option("--tag", "tag_filter", default=None, help="Filter by tag")
+@click.option("--project", "project_filter", default=None, help="Filter by project")
 @click.option("--brief", "-b", is_flag=True, help="Show only item IDs and matched field names")
 @click.option("--format", "fmt", type=click.Choice(["compact", "brief", "json"]),
               default=None, help="Output format (default: compact)")
@@ -262,7 +264,7 @@ VALID_GREP_FIELDS = [
 @click.option("--limit", "-n", type=int, default=50, help="Max results (default: 50)")
 @click.option("--data-dir", type=click.Path(), default=None)
 def grep_cmd(pattern, fields, type_filter, state_filter, area_filter, assigned_to,
-             tag_filter, brief, fmt, ignore_case, context_chars, limit, data_dir):
+             tag_filter, project_filter, brief, fmt, ignore_case, context_chars, limit, data_dir):
     """Search work items with regex patterns across fields."""
     if brief and fmt is None:
         fmt = "brief"
@@ -284,7 +286,8 @@ def grep_cmd(pattern, fields, type_filter, state_filter, area_filter, assigned_t
         raise SystemExit(2)
 
     candidate_ids = None
-    has_filters = any([type_filter, state_filter, area_filter, assigned_to, tag_filter])
+    has_filters = any([type_filter, state_filter, area_filter, assigned_to, tag_filter,
+                       project_filter])
     if has_filters:
         db_is_new = not (data_path / "index.db").exists()
         with _open_db(data_path) as db:
@@ -292,7 +295,7 @@ def grep_cmd(pattern, fields, type_filter, state_filter, area_filter, assigned_t
             candidate_ids = db.get_filtered_ids(
                 type_filter=type_filter, state_filter=state_filter,
                 area_filter=area_filter, assigned_to_filter=assigned_to,
-                tag_filter=tag_filter,
+                tag_filter=tag_filter, project_filter=project_filter,
             )
         if candidate_ids is not None and not candidate_ids:
             click.echo("No items match the specified filters.")

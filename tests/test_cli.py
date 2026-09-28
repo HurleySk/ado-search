@@ -160,3 +160,35 @@ def test_grep_with_metadata_filter(tmp_path):
     assert result.exit_code == 0
     assert "#1" in result.output
     assert "#2" not in result.output
+
+
+def _seed_two_projects(data_dir):
+    from ado_search.jsonl import write_jsonl
+    base = {"type": "Bug", "state": "Active", "iteration": "", "assigned_to": "", "tags": "",
+            "priority": 2, "parent_id": None, "created": "2026-01-01", "updated": "2026-01-01",
+            "description": "", "acceptance_criteria": "", "comments": []}
+    write_jsonl(data_dir / "work-items.jsonl", {
+        1: {**base, "id": 1, "title": "payment timeout", "project": "Alpha", "area": "Alpha"},
+        2: {**base, "id": 2, "title": "payment retry", "project": "Beta", "area": "Beta"},
+    }, sort_key="id")
+
+
+def test_search_project_filter(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    data_dir.mkdir()
+    _seed_two_projects(data_dir)
+    result = CliRunner().invoke(main, ["search", "payment", "--project", "Beta",
+                                       "--format", "json", "--data-dir", str(data_dir)])
+    assert result.exit_code == 0, result.output
+    ids = [r["id"] for r in json.loads(result.output)]
+    assert ids == [2]
+
+
+def test_grep_project_filter(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    data_dir.mkdir()
+    _seed_two_projects(data_dir)
+    result = CliRunner().invoke(main, ["grep", "payment", "--field", "title", "--project", "Alpha",
+                                       "--format", "json", "--data-dir", str(data_dir)])
+    assert result.exit_code == 0, result.output
+    assert [r["id"] for r in json.loads(result.output)] == [1]

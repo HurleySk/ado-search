@@ -78,3 +78,20 @@ def test_format_json(tmp_path):
     parsed = json.loads(output)
     assert len(parsed) == 1
     assert parsed[0]["id"] == 100
+
+
+def test_format_results_shows_project_when_mixed(tmp_path):
+    results = [
+        {"id": 1, "title": "a", "type": "Bug", "state": "New", "project": "Alpha",
+         "file_path": "work-items.jsonl#id=1", "source": "work_item"},
+        {"id": 2, "title": "b", "type": "Bug", "state": "New", "project": "Beta",
+         "file_path": "work-items.jsonl#id=2", "source": "work_item"},
+    ]
+    out = format_results(results, fmt="compact", data_dir=tmp_path)
+    assert "[Alpha] a" in out and "[Beta] b" in out
+
+
+def test_format_results_hides_project_when_single(tmp_path):
+    results = [{"id": 1, "title": "a", "type": "Bug", "state": "New", "project": "Alpha",
+                "file_path": "work-items.jsonl#id=1", "source": "work_item"}]
+    assert "[Alpha]" not in format_results(results, fmt="compact", data_dir=tmp_path)

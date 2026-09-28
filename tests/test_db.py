@@ -570,3 +570,56 @@ def test_reindex_indexes_custom_notes(tmp_path):
     results = db.search_work_items("alm_docketnamereplacement")
     assert [r["id"] for r in results] == [7]
     db.close()
+
+
+import sqlite3
+
+
+def _item(i, title, project=None, area=""):
+    item = {
+        "id": i, "title": title, "type": "Bug", "state": "Active", "area": area,
+        "iteration": "", "assigned_to": "", "tags": "", "priority": 2,
+        "parent_id": None, "created": "2026-01-01", "updated": "2026-01-01",
+        "description_snippet": title,
+    }
+    if project is not None:
+        item["project"] = project
+    return item
+
+
+def test_project_column_and_backfill(db):
+    db.upsert_work_item(_item(1, "login bug", project="Beta", area=r"Alpha\Web"))
+    db.upsert_work_item(_item(2, "login crash", area=r"Alpha\Web"))
+    assert db.get_work_item(1)["project"] == "Beta"
+    assert db.get_work_item(2)["project"] == "Alpha"
+
+
+def test_search_work_items_project_filter(db):
+    db.upsert_work_item(_item(1, "login bug", project="Alpha"))
+    db.upsert_work_item(_item(2, "login crash", project="Beta"))
+    rows = db.search_work_items("login", project_filter="Beta")
+    assert [r["id"] for r in rows] == [2]
+    assert rows[0]["project"] == "Beta"
+
+
+def test_get_filtered_ids_project_filter(db):
+    db.upsert_work_item(_item(1, "a", project="Alpha"))
+    db.upsert_work_item(_item(2, "b", project="Beta"))
+    assert db.get_filtered_ids(project_filter="Alpha") == {1}
+
+
+def test_initialize_migrates_old_db_without_project(tmp_path):
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.execute("""CREATE TABLE work_items (id INTEGER PRIMARY KEY, title TEXT NOT NULL,
+        type TEXT NOT NULL, state TEXT NOT NULL, area TEXT, iteration TEXT, assigned_to TEXT,
+        tags TEXT, priority INTEGER, parent_id INTEGER, created TEXT, updated TEXT)""")
+    conn.commit()
+    conn.close()
+    old = Database(path)
+    old.initialize()
+    cols = {r[1] for r in old._connect().execute("PRAGMA table_info(work_items)")}
+    idx = {r[1] for r in old._connect().execute("PRAGMA index_list(work_items)")}
+    old.close()
+    assert "project" in cols
+    assert "idx_work_items_project" in idx

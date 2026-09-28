@@ -4,6 +4,8 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
+from ado_search.projects import project_from_area
+
 
 def _sanitize_fts_query(query: str) -> str:
     """Quote each token to prevent FTS5 syntax injection."""
@@ -68,7 +70,8 @@ class Database:
                 acceptance_criteria TEXT DEFAULT '',
                 story_points REAL DEFAULT NULL,
                 dev_notes TEXT DEFAULT '',
-                notes TEXT DEFAULT ''
+                notes TEXT DEFAULT '',
+                project TEXT DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS wiki_pages (
@@ -110,6 +113,7 @@ class Database:
             ("closed_date", "TEXT", "''"),
             ("dev_notes", "TEXT", "''"),
             ("notes", "TEXT", "''"),
+            ("project", "TEXT", "''"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE work_items ADD COLUMN {col} {col_type} DEFAULT {default}")
@@ -119,6 +123,7 @@ class Database:
             conn.execute("ALTER TABLE wiki_pages ADD COLUMN content TEXT DEFAULT ''")
         except Exception:
             pass
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_work_items_project ON work_items(project)")
         conn.commit()
 
     def _upsert_fts(self, conn: sqlite3.Connection, item_type: str, item_id: str,
@@ -141,8 +146,8 @@ class Database:
                (id, title, type, state, area, iteration, assigned_to, tags,
                 priority, parent_id, closed_date, created, updated,
                 description, acceptance_criteria, story_points,
-                dev_notes, notes)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                dev_notes, notes, project)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                 title=excluded.title, type=excluded.type, state=excluded.state,
                 area=excluded.area, iteration=excluded.iteration,
@@ -153,7 +158,8 @@ class Database:
                 description=excluded.description,
                 acceptance_criteria=excluded.acceptance_criteria,
                 story_points=excluded.story_points,
-                dev_notes=excluded.dev_notes, notes=excluded.notes
+                dev_notes=excluded.dev_notes, notes=excluded.notes,
+                project=excluded.project
             """,
             (
                 item["id"], item["title"], item["type"], item["state"],
@@ -164,6 +170,7 @@ class Database:
                 item.get("description", ""), item.get("acceptance_criteria", ""),
                 item.get("story_points"),
                 item.get("dev_notes", ""), item.get("notes", ""),
+                item.get("project") or project_from_area(item.get("area") or ""),
             ),
         )
         self._upsert_fts(conn, "work_item", str(item["id"]),
@@ -252,13 +259,14 @@ class Database:
         area_filter: str | None = None,
         assigned_to_filter: str | None = None,
         tag_filter: str | None = None,
+        project_filter: str | None = None,
         limit: int = 20,
     ) -> list[dict]:
         conn = self._connect()
         sql = """
             SELECT w.id, w.title, w.type, w.state, w.area, w.iteration,
                    w.assigned_to, w.tags, w.priority, w.parent_id,
-                   w.created, w.updated, s.description_snippet
+                   w.created, w.updated, w.project, s.description_snippet
             FROM search_index s
             JOIN work_items w ON CAST(s.item_id AS INTEGER) = w.id
             WHERE s.item_type = 'work_item'
@@ -281,6 +289,9 @@ class Database:
         if tag_filter:
             sql += " AND (',' || w.tags || ',') LIKE ?"
             params.append(f"%,{tag_filter},%")
+        if project_filter:
+            sql += " AND w.project = ?"
+            params.append(project_filter)
 
         sql += " ORDER BY rank LIMIT ?"
         params.append(limit)
@@ -317,9 +328,11 @@ class Database:
         area_filter: str | None = None,
         assigned_to_filter: str | None = None,
         tag_filter: str | None = None,
+        project_filter: str | None = None,
     ) -> set[int] | None:
         """Return IDs matching metadata filters, or None if no filters given."""
-        if not any([type_filter, state_filter, area_filter, assigned_to_filter, tag_filter]):
+        if not any([type_filter, state_filter, area_filter, assigned_to_filter, tag_filter,
+                    project_filter]):
             return None
 
         conn = self._connect()
@@ -341,6 +354,9 @@ class Database:
         if tag_filter:
             sql += " AND (',' || tags || ',') LIKE ?"
             params.append(f"%,{tag_filter},%")
+        if project_filter:
+            sql += " AND project = ?"
+            params.append(project_filter)
 
         rows = conn.execute(sql, params).fetchall()
         return {row["id"] for row in rows}

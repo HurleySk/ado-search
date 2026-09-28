@@ -162,8 +162,8 @@ def sync(data_dir: str | None, dry_run: bool, include_attachments: bool, full: b
          only_projects: tuple[str, ...]):
     """Sync work items and wiki pages from Azure DevOps."""
     from ado_search.projects import (
-        ALL_PROJECTS, configured_projects, expand_projects,
-        fetch_remote_projects, record_watermark, watermark_for,
+        ALL_PROJECTS, area_paths_for, configured_projects, expand_projects,
+        fetch_remote_projects, record_watermark, same_project, watermark_for,
     )
 
     with _conn_db(data_dir, require_project=False) as (conn, db):
@@ -177,11 +177,12 @@ def sync(data_dir: str | None, dry_run: bool, include_attachments: bool, full: b
             ))
             projects = expand_projects(projects, remote)
         if only_projects:
-            unknown = sorted(set(only_projects) - set(projects))
+            unknown = sorted(o for o in only_projects
+                             if not any(same_project(o, p) for p in projects))
             if unknown:
                 click.echo(f"Error: not a configured project: {', '.join(unknown)}", err=True)
                 raise SystemExit(2)
-            projects = [p for p in projects if p in only_projects]
+            projects = [p for p in projects if any(same_project(p, o) for o in only_projects)]
         if not projects:
             click.echo("Error: no projects configured.", err=True)
             raise SystemExit(1)
@@ -190,17 +191,21 @@ def sync(data_dir: str | None, dry_run: bool, include_attachments: bool, full: b
         from ado_search.sync_wiki import sync_wiki
 
         suffix = " (with attachments)" if effective_attachments else ""
+        all_area_paths = sync_cfg.get("area_paths", [])
         failed: list[str] = []
         for project in projects:
             last_sync = "" if full else watermark_for(conn.cfg, project)
+            area_paths = area_paths_for(all_area_paths, project)
             click.echo(f"Syncing work items for {project}...{suffix}")
+            if all_area_paths and not area_paths:
+                click.echo(f"  No configured area_paths under {project}; syncing all its areas")
             try:
                 wi_stats = asyncio.run(sync_work_items(
                     org=conn.org, project=project,
                     auth_method=conn.auth_method, pat=conn.pat,
                     data_dir=conn.data_path,
                     work_item_types=sync_cfg.get("work_item_types", []),
-                    area_paths=sync_cfg.get("area_paths", []),
+                    area_paths=area_paths,
                     states=sync_cfg.get("states", []),
                     last_sync=last_sync,
                     max_concurrent=sync_cfg.get("performance", {}).get("max_concurrent", 5),
@@ -208,7 +213,7 @@ def sync(data_dir: str | None, dry_run: bool, include_attachments: bool, full: b
                     include_attachments=effective_attachments,
                     dry_run=dry_run,
                 ))
-            except RuntimeError as e:
+            except Exception as e:
                 click.echo(f"  Error syncing {project}: {e}", err=True)
                 failed.append(project)
                 continue
@@ -216,17 +221,22 @@ def sync(data_dir: str | None, dry_run: bool, include_attachments: bool, full: b
             if not dry_run:
                 record_watermark(conn.cfg, project, datetime.now(timezone.utc).strftime("%Y-%m-%d"))
 
-        if conn.project and conn.project in projects:
+        if conn.project and any(same_project(conn.project, p) for p in projects):
             click.echo("Syncing wiki pages...")
-            wiki_stats = asyncio.run(sync_wiki(
-                org=conn.org, project=conn.project,
-                auth_method=conn.auth_method, pat=conn.pat,
-                data_dir=conn.data_path,
-                wiki_names=sync_cfg.get("wiki_names", []),
-                max_concurrent=sync_cfg.get("performance", {}).get("max_concurrent", 5),
-                dry_run=dry_run,
-            ))
-            click.echo(f"  Wiki pages: {wiki_stats['fetched']} synced, {wiki_stats['errors']} errors")
+            try:
+                wiki_stats = asyncio.run(sync_wiki(
+                    org=conn.org, project=conn.project,
+                    auth_method=conn.auth_method, pat=conn.pat,
+                    data_dir=conn.data_path,
+                    wiki_names=sync_cfg.get("wiki_names", []),
+                    max_concurrent=sync_cfg.get("performance", {}).get("max_concurrent", 5),
+                    dry_run=dry_run,
+                ))
+            except Exception as e:
+                click.echo(f"  Error syncing wiki pages: {e}", err=True)
+                failed.append("wiki")
+            else:
+                click.echo(f"  Wiki pages: {wiki_stats['fetched']} synced, {wiki_stats['errors']} errors")
         elif not conn.project:
             click.echo("Skipping wiki pages (no default project; set organization.project)")
 

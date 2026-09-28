@@ -293,3 +293,40 @@ async def test_find_id_range_start_no_items():
         )
 
     assert result is None
+
+
+def test_full_wiql_sync_scope_ignores_project_case(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    data_dir.mkdir()
+    wi_jsonl = data_dir / "work-items.jsonl"
+    base = {"type": "Bug", "state": "Active", "iteration": "", "assigned_to": "", "tags": "",
+            "priority": 3, "parent_id": None, "created": "2026-01-01", "updated": "2026-01-01",
+            "description": "", "acceptance_criteria": "", "comments": []}
+    write_jsonl(wi_jsonl, {
+        998: {**base, "id": 998, "title": "other project", "project": "Beta", "area": "Beta"},
+        999: {**base, "id": 999, "title": "deleted", "project": "MyProject", "area": "MyProject"},
+    }, sort_key="id")
+    wiql_result = json.dumps([{"id": 12345}])
+    item_12345 = (FIXTURE_DIR / "work_item_12345.json").read_text()
+
+    async def fake_run(cmd, **kwargs):
+        cmd_str = " ".join(str(c) for c in cmd)
+        if "analytics.dev.azure.com" in cmd_str:
+            return CommandResult(command=cmd, returncode=1, stdout="", stderr="403 Forbidden")
+        if "query" in cmd_str and "--wiql" in cmd_str:
+            return CommandResult(command=cmd, returncode=0, stdout=wiql_result, stderr="")
+        if "12345" in cmd_str and "comments" not in cmd_str:
+            return CommandResult(command=cmd, returncode=0, stdout=item_12345, stderr="")
+        return CommandResult(command=cmd, returncode=0, stdout=json.dumps({"comments": []}), stderr="")
+
+    with patch("ado_search.runner.run_command", side_effect=fake_run):
+        asyncio.run(sync_work_items(
+            org="https://dev.azure.com/contoso", project="myproject", auth_method="az-cli",
+            data_dir=data_dir, work_item_types=["Bug"], area_paths=[], states=[],
+            last_sync="", max_concurrent=2, dry_run=False,
+        ))
+
+    items = read_jsonl(wi_jsonl, key="id")
+    assert 999 not in items  # same project, different spelling: an orphan
+    assert 998 in items
+    assert 12345 in items

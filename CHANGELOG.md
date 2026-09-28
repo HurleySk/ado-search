@@ -4,13 +4,13 @@
 
 ### Added
 
-- **Multiple projects per data dir** -- `organization.projects = ["A", "B"]` (or `["*"]` for every project the credentials can see) syncs each project into the same `work-items.jsonl` / `index.db`. The legacy `organization.project` still works and remains the default project for write commands and wiki sync. `sync --project NAME` (repeatable) limits a run to specific projects. Each project has its own watermark in `[sync.last_sync_by_project]`; the legacy `last_sync` is migrated on first use. A project that fails to sync is reported and skipped (exit code 1) without blocking the others or advancing its watermark.
-- **`project` field** on every work item record (from `System.TeamProject`, falling back to the area-path root), indexed in `index.db`.
+- **Multiple projects per data dir** -- `organization.projects = ["A", "B"]` (or `["*"]` for every project the credentials can see) syncs each project into the same `work-items.jsonl` / `index.db`. The legacy `organization.project` still works and remains the default project for write commands and wiki sync. `sync --project NAME` (repeatable) limits a run to specific projects. Each project has its own watermark in `[sync.last_sync_by_project]`; the legacy `last_sync` is migrated on first use. A project (or the wiki) that fails to sync is reported and skipped (exit code 1) without blocking the others or advancing its watermark. Project names match case-insensitively. `sync.area_paths` entries apply only to the project they start with; a project with no matching entry syncs all its areas.
+- **`project` field** on every work item record (from `System.TeamProject`, falling back to the area-path root), indexed in `index.db`. Existing indexes are backfilled from the area-path root on upgrade.
 - **`--project` filter** on `search` and `grep`. Compact search output prefixes titles with `[project]` when results span projects; JSON output always includes `project`.
 
 ### Fixed
 
-- **OData sync truncated at 5,000 items** -- Analytics returns no `@odata.nextLink` for client-driven `$top`, so only the first page was fetched. Pages are now requested by `$skip` while full. A failed page now aborts the sync instead of finalizing partial data.
+- **OData sync truncated at 5,000 items** -- Analytics returns no `@odata.nextLink` for client-driven `$top`, so only the first page was fetched. Pages are now requested by `$skip` (ordered by `WorkItemId`) while full. A failed page now aborts the sync instead of finalizing partial data.
 - **Full sync could delete other projects' items** -- orphan detection is now scoped to the project being synced.
 - **OData sync erased `state_history`** captured earlier by the WIQL path; existing history is now kept when the incoming record has none.
 - **`save_config` wrote invalid TOML** for keys with spaces and strings containing backslashes (e.g. area paths); keys are quoted and strings escaped.

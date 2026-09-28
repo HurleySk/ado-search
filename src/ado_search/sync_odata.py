@@ -10,7 +10,7 @@ import click
 
 from ado_search.auth import OP_ODATA_QUERY
 from ado_search.markdown import CUSTOM_TEXT_FIELDS
-from ado_search.projects import record_project
+from ado_search.projects import in_project, project_from_area, same_project
 from ado_search.runner import SyncResult, run_operation
 from ado_search.sync_common import finalize_jsonl, prepare_work_item
 
@@ -47,7 +47,7 @@ def build_odata_url(
     extra_select: list[str] | None = None,
 ) -> str:
     """Build an OData analytics URL for querying WorkItems."""
-    # Extract org name from URL (e.g., "pcxhub-acms" from "https://dev.azure.com/pcxhub-acms")
+    # Extract org name from URL (e.g., "contoso" from "https://dev.azure.com/contoso")
     parsed = urlparse(org)
     org_name = parsed.path.lstrip("/")
 
@@ -82,6 +82,8 @@ def build_odata_url(
         select = ",".join([select, *extra_select])
     params.append(f"$select={quote(select, safe=',')}")
     params.append(f"$expand={quote(ODATA_EXPAND, safe=',$()/')}")
+    # $skip paging is only stable over a deterministic order
+    params.append("$orderby=WorkItemId")
     params.append(f"$top={top}")
     params.append(f"$skip={skip}")
     if filter_str:
@@ -120,6 +122,12 @@ def odata_to_ado_format(odata_item: dict, project: str = "") -> dict:
     if tags:
         tags = "; ".join(t.strip() for t in tags.split(",") if t.strip())
 
+    # The area root carries the project's canonical spelling; config may not
+    area_path = (odata_item.get("Area") or {}).get("AreaPath", "")
+    area_root = project_from_area(area_path)
+    if area_root and same_project(area_root, project):
+        project = area_root
+
     return {
         "id": odata_item["WorkItemId"],
         "fields": {
@@ -127,7 +135,7 @@ def odata_to_ado_format(odata_item: dict, project: str = "") -> dict:
             "System.Title": odata_item.get("Title", ""),
             "System.WorkItemType": odata_item.get("WorkItemType", ""),
             "System.State": odata_item.get("State", ""),
-            "System.AreaPath": (odata_item.get("Area") or {}).get("AreaPath", ""),
+            "System.AreaPath": area_path,
             "System.IterationPath": (odata_item.get("Iteration") or {}).get("IterationPath", ""),
             "System.AssignedTo": assigned_field,
             "System.Tags": tags,
@@ -257,7 +265,7 @@ async def sync_via_odata(
     finalize_jsonl(
         wi_jsonl, fetched_records,
         key="id", sort_key="id", is_incremental=bool(last_sync),
-        scope=lambda r: record_project(r) in ("", project),
+        scope=lambda r: in_project(r, project),
     )
 
     return {"fetched": fetched, "errors": errors}

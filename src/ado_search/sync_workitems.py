@@ -7,7 +7,7 @@ from pathlib import Path
 import click
 
 from ado_search.auth import OP_COMMENTS, OP_QUERY, OP_SHOW, OP_UPDATES
-from ado_search.projects import record_project
+from ado_search.projects import in_project
 from ado_search.runner import SyncResult, fetch_and_parse, run_operation
 from ado_search.sync_common import extract_state_history, finalize_jsonl, prepare_work_item, split_results
 
@@ -372,7 +372,7 @@ async def _fetch_and_finalize(
     finalize_jsonl(
         data_dir / "work-items.jsonl", fetched_records,
         key="id", sort_key="id", is_incremental=is_incremental,
-        scope=(lambda r: record_project(r) in ("", scope_project)) if scope_project else None,
+        scope=(lambda r: in_project(r, scope_project)) if scope_project else None,
     )
 
     return {"fetched": len(fetched_records), "errors": len(errors)}

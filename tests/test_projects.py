@@ -7,13 +7,16 @@ import pytest
 from ado_search.config import default_config
 from ado_search.projects import (
     ALL_PROJECTS,
+    area_paths_for,
     configured_projects,
     default_project,
     expand_projects,
     fetch_remote_projects,
+    in_project,
     project_from_area,
     record_project,
     record_watermark,
+    same_project,
     watermark_for,
 )
 from ado_search.runner import CommandResult
@@ -83,9 +86,54 @@ def test_record_watermark_migrates_legacy_before_overwriting():
     cfg = _cfg(project="Alpha", projects=["Alpha", "Beta"], last_sync="2026-01-01")
     record_watermark(cfg, "Beta", "2026-09-28")
     assert cfg["sync"]["last_sync_by_project"] == {"Alpha": "2026-01-01", "Beta": "2026-09-28"}
-    assert cfg["sync"]["last_sync"] == "2026-09-28"
+    # last_sync only tracks the legacy project (1.13 reads it for Alpha)
+    assert cfg["sync"]["last_sync"] == "2026-01-01"
     # Alpha was not synced this run, so its own watermark is untouched
     assert watermark_for(cfg, "Alpha") == "2026-01-01"
+
+
+def test_record_watermark_other_project_never_advances_unsynced_default():
+    cfg = _cfg(project="Alpha", projects=["Alpha", "Beta"])
+    record_watermark(cfg, "Beta", "2026-09-28")
+    assert cfg["sync"]["last_sync"] == ""
+    assert watermark_for(cfg, "Alpha") == ""
+
+
+def test_record_watermark_legacy_project_updates_last_sync_ignoring_case():
+    cfg = _cfg(project="Alpha", last_sync="2026-01-01")
+    record_watermark(cfg, "alpha", "2026-09-28")
+    assert cfg["sync"]["last_sync"] == "2026-09-28"
+    assert watermark_for(cfg, "Alpha") == "2026-09-28"
+
+
+def test_watermark_for_ignores_case():
+    cfg = _cfg(project="myproject", last_sync="2026-01-01", by_project={"Beta": "2026-02-02"})
+    assert watermark_for(cfg, "MyProject") == "2026-01-01"
+    assert watermark_for(cfg, "beta") == "2026-02-02"
+
+
+def test_record_watermark_reuses_existing_key_ignoring_case():
+    cfg = _cfg(by_project={"Beta": "2026-02-02"})
+    record_watermark(cfg, "beta", "2026-09-28")
+    assert cfg["sync"]["last_sync_by_project"] == {"Beta": "2026-09-28"}
+
+
+def test_same_project_ignores_case():
+    assert same_project("MyProject", "myproject")
+    assert not same_project("Alpha", "Beta")
+
+
+def test_in_project_scope():
+    assert in_project({"project": "MyProject"}, "myproject")
+    assert in_project({"area": r"myproject\Team"}, "MyProject")
+    assert in_project({"area": ""}, "Alpha")  # projectless records are in scope
+    assert not in_project({"project": "Beta"}, "Alpha")
+
+
+def test_area_paths_for_keeps_only_this_projects_paths():
+    paths = [r"Alpha\Web", r"beta\Api", "Beta"]
+    assert area_paths_for(paths, "Beta") == [r"beta\Api", "Beta"]
+    assert area_paths_for(paths, "Gamma") == []
 
 
 def test_project_from_area():

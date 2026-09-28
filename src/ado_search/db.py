@@ -106,6 +106,7 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_work_items_assigned_to ON work_items(assigned_to);
             CREATE INDEX IF NOT EXISTS idx_work_items_parent_id ON work_items(parent_id);
         """)
+        added: set[str] = set()
         for col, col_type, default in [
             ("description", "TEXT", "''"),
             ("acceptance_criteria", "TEXT", "''"),
@@ -117,8 +118,16 @@ class Database:
         ]:
             try:
                 conn.execute(f"ALTER TABLE work_items ADD COLUMN {col} {col_type} DEFAULT {default}")
+                added.add(col)
             except Exception:
                 pass  # column already exists
+        if "project" in added:
+            # Backfill from the area root so --project works before the next sync
+            conn.execute("""
+                UPDATE work_items SET project = CASE
+                    WHEN instr(area, char(92)) > 0 THEN substr(area, 1, instr(area, char(92)) - 1)
+                    ELSE COALESCE(area, '') END
+            """)
         try:
             conn.execute("ALTER TABLE wiki_pages ADD COLUMN content TEXT DEFAULT ''")
         except Exception:
@@ -290,7 +299,7 @@ class Database:
             sql += " AND (',' || w.tags || ',') LIKE ?"
             params.append(f"%,{tag_filter},%")
         if project_filter:
-            sql += " AND w.project = ?"
+            sql += " AND w.project = ? COLLATE NOCASE"
             params.append(project_filter)
 
         sql += " ORDER BY rank LIMIT ?"
@@ -355,7 +364,7 @@ class Database:
             sql += " AND (',' || tags || ',') LIKE ?"
             params.append(f"%,{tag_filter},%")
         if project_filter:
-            sql += " AND project = ?"
+            sql += " AND project = ? COLLATE NOCASE"
             params.append(project_filter)
 
         rows = conn.execute(sql, params).fetchall()

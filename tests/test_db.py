@@ -614,12 +614,26 @@ def test_initialize_migrates_old_db_without_project(tmp_path):
     conn.execute("""CREATE TABLE work_items (id INTEGER PRIMARY KEY, title TEXT NOT NULL,
         type TEXT NOT NULL, state TEXT NOT NULL, area TEXT, iteration TEXT, assigned_to TEXT,
         tags TEXT, priority INTEGER, parent_id INTEGER, created TEXT, updated TEXT)""")
+    conn.executemany("INSERT INTO work_items (id, title, type, state, area) VALUES (?, ?, 'Bug', 'New', ?)",
+                     [(1, "a", r"Alpha\Web"), (2, "b", "Solo"), (3, "c", ""), (4, "d", None)])
     conn.commit()
     conn.close()
     old = Database(path)
     old.initialize()
     cols = {r[1] for r in old._connect().execute("PRAGMA table_info(work_items)")}
     idx = {r[1] for r in old._connect().execute("PRAGMA index_list(work_items)")}
+    projects = dict(old._connect().execute("SELECT id, project FROM work_items"))
+    filtered = old.get_filtered_ids(project_filter="Alpha")
     old.close()
     assert "project" in cols
     assert "idx_work_items_project" in idx
+    # Upgraded indexes are backfilled, so --project works before the next sync
+    assert projects == {1: "Alpha", 2: "Solo", 3: "", 4: ""}
+    assert filtered == {1}
+
+
+def test_project_filters_ignore_case(db):
+    db.upsert_work_item(_item(1, "login bug", project="Alpha"))
+    db.upsert_work_item(_item(2, "login crash", project="Beta"))
+    assert [r["id"] for r in db.search_work_items("login", project_filter="alpha")] == [1]
+    assert db.get_filtered_ids(project_filter="BETA") == {2}

@@ -444,3 +444,46 @@ def test_sync_via_odata_raises_on_pagination_failure(tmp_path, monkeypatch):
 
     # Nothing finalized: the existing item was not deleted
     assert set(read_jsonl(wi_jsonl, key="id")) == {9}
+
+
+def test_build_odata_url_orders_by_work_item_id():
+    # $skip paging is only stable over a deterministic order
+    url = build_odata_url(
+        "https://dev.azure.com/contoso", "MyProject",
+        work_item_types=[], area_paths=[], states=[], last_sync="", skip=5000,
+    )
+    assert "$orderby=WorkItemId" in url
+
+
+def test_odata_to_ado_format_takes_project_case_from_area():
+    item = {"WorkItemId": 5, "Title": "x", "WorkItemType": "Bug", "State": "New",
+            "Area": {"AreaPath": "MyProject\Team"}}
+    ado = odata_to_ado_format(item, project="myproject")
+    assert ado["fields"]["System.TeamProject"] == "MyProject"
+
+
+def test_sync_via_odata_full_sync_scope_ignores_project_case(tmp_path):
+    from ado_search.jsonl import write_jsonl
+    data_dir = tmp_path / ".ado-search"
+    data_dir.mkdir()
+    wi_jsonl = data_dir / "work-items.jsonl"
+    write_jsonl(wi_jsonl, {
+        900: {"id": 900, "title": "beta item", "project": "Beta", "area": "Beta"},
+        901: {"id": 901, "title": "stale", "project": "MyProject", "area": "MyProject"},
+    }, sort_key="id")
+    page = json.dumps({"value": [{"WorkItemId": 100, "Title": "new", "WorkItemType": "Bug",
+                                  "State": "New", "Area": {"AreaPath": "MyProject"}}]})
+
+    async def fake_run(cmd, **kwargs):
+        return CommandResult(command=cmd, returncode=0, stdout=page, stderr="")
+
+    with patch("ado_search.runner.run_command", side_effect=fake_run):
+        asyncio.run(sync_via_odata(
+            org="https://dev.azure.com/contoso", project="myproject", auth_method="az-cli",
+            data_dir=data_dir, work_item_types=["Bug"], area_paths=[], states=[],
+            last_sync="", dry_run=False,
+        ))
+
+    items = read_jsonl(wi_jsonl, key="id")
+    assert set(items) == {100, 900}
+    assert items[100]["project"] == "MyProject"

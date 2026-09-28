@@ -215,6 +215,8 @@ ado-search grep "retry" --project Alpha
 
 Each project keeps its own incremental watermark under `[sync.last_sync_by_project]`. Wiki pages are synced for the default project only.
 
+Project names are matched case-insensitively, as in Azure DevOps. `sync.area_paths` entries apply to the project they start with (`Alpha\Web` filters Alpha only); a project with no matching entry syncs all its areas. `work_item_types` and `states` apply to every project, so list the types of every process you sync (e.g. both `User Story` and `Product Backlog Item`).
+
 ## Auth Methods
 
 - **az-cli** (default): Uses `az devops` commands. Requires `az login`.

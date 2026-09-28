@@ -197,9 +197,11 @@ def test_grep_project_filter(tmp_path):
 from ado_search.config import default_config, load_config, save_config
 
 
-def _write_config(data_dir, *, project="", projects=None, by_project=None):
+def _write_config(data_dir, *, project="", projects=None, by_project=None, area_paths=None):
     data_dir.mkdir(parents=True, exist_ok=True)
     cfg = default_config()
+    if area_paths is not None:
+        cfg["sync"]["area_paths"] = area_paths
     cfg["organization"]["url"] = "https://dev.azure.com/contoso"
     cfg["organization"]["project"] = project
     if projects is not None:
@@ -209,9 +211,9 @@ def _write_config(data_dir, *, project="", projects=None, by_project=None):
     save_config(cfg, data_dir / "config.toml")
 
 
-def _run_sync(data_dir, *extra, wi_side_effect=None):
+def _run_sync(data_dir, *extra, wi_side_effect=None, wiki_side_effect=None):
     wi = AsyncMock(return_value={"fetched": 1, "errors": 0}, side_effect=wi_side_effect)
-    wiki = AsyncMock(return_value={"fetched": 0, "errors": 0})
+    wiki = AsyncMock(return_value={"fetched": 0, "errors": 0}, side_effect=wiki_side_effect)
     with (
         patch("ado_search.sync_workitems.sync_work_items", wi),
         patch("ado_search.sync_wiki.sync_wiki", wiki),
@@ -284,3 +286,83 @@ def test_write_command_requires_default_project(tmp_path):
     result = CliRunner().invoke(main, ["list-comments", "1", "--data-dir", str(data_dir)])
     assert result.exit_code == 1
     assert "organization.project" in result.output
+
+
+def _calls(wi, arg="last_sync"):
+    return {c.kwargs["project"]: c.kwargs[arg] for c in wi.call_args_list}
+
+
+def test_sync_of_other_project_leaves_default_unsynced(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    _write_config(data_dir, project="Alpha", projects=["Alpha", "Beta"])
+    _run_sync(data_dir, "--project", "Beta")
+    result, wi, _ = _run_sync(data_dir)
+    assert result.exit_code == 0, result.output
+    assert _calls(wi)["Alpha"] == ""
+
+
+def test_failed_default_project_gets_full_sync_next_run(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    _write_config(data_dir, project="Alpha", projects=["Alpha", "Beta"])
+
+    async def alpha_fails(**kwargs):
+        if kwargs["project"] == "Alpha":
+            raise RuntimeError("WIQL query failed: 401")
+        return {"fetched": 1, "errors": 0}
+
+    _run_sync(data_dir, wi_side_effect=alpha_fails)
+    result, wi, _ = _run_sync(data_dir)
+    assert result.exit_code == 0, result.output
+    assert _calls(wi)["Alpha"] == ""
+
+
+def test_sync_project_option_ignores_case(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    _write_config(data_dir, project="Alpha", projects=["Alpha", "Beta"])
+    result, wi, _ = _run_sync(data_dir, "--project", "beta")
+    assert result.exit_code == 0, result.output
+    assert [c.kwargs["project"] for c in wi.call_args_list] == ["Beta"]
+
+
+def test_sync_star_with_lowercase_default_still_syncs_wiki(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    _write_config(data_dir, project="alpha", projects=["*"])
+    remote = AsyncMock(return_value=["Alpha", "Beta"])
+    with patch("ado_search.projects.fetch_remote_projects", remote):
+        result, _, wiki = _run_sync(data_dir)
+    assert result.exit_code == 0, result.output
+    wiki.assert_called_once()
+
+
+def test_sync_scopes_area_paths_to_their_project(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    _write_config(data_dir, project="Alpha", projects=["Alpha", "Beta"], area_paths=["Alpha\Web"])
+    result, wi, _ = _run_sync(data_dir)
+    assert result.exit_code == 0, result.output
+    assert _calls(wi, "area_paths") == {"Alpha": ["Alpha\Web"], "Beta": []}
+
+
+def test_sync_unexpected_error_in_one_project_continues(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    _write_config(data_dir, project="Alpha", projects=["Alpha", "Beta"])
+
+    async def alpha_breaks(**kwargs):
+        if kwargs["project"] == "Alpha":
+            raise ValueError("Expecting value: line 1 column 1")
+        return {"fetched": 1, "errors": 0}
+
+    result, _, _ = _run_sync(data_dir, wi_side_effect=alpha_breaks)
+    assert result.exit_code == 1
+    assert "Alpha" in result.output
+    saved = load_config(data_dir / "config.toml")
+    assert set(saved["sync"]["last_sync_by_project"]) == {"Beta"}
+
+
+def test_sync_wiki_failure_keeps_project_watermarks(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    _write_config(data_dir, project="Alpha", projects=["Alpha", "Beta"])
+    result, _, _ = _run_sync(data_dir, wiki_side_effect=RuntimeError("wiki list failed: 403"))
+    assert result.exit_code == 1
+    assert "wiki" in result.output.lower()
+    saved = load_config(data_dir / "config.toml")
+    assert set(saved["sync"]["last_sync_by_project"]) == {"Alpha", "Beta"}

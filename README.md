@@ -80,7 +80,7 @@ ado-search sync --include-attachments
 | Command | Description |
 |---------|-------------|
 | `ado-search init` | Configure organization, project, and auth |
-| `ado-search sync` | Pull latest data from Azure DevOps (`--full` for complete re-fetch) |
+| `ado-search sync` | Pull latest data from Azure DevOps (`--full` for complete re-fetch, `--project` to limit) |
 | `ado-search search "query"` | Full-text search with filters |
 | `ado-search show <id>` | Display full content of an item |
 | `ado-search create` | Create a new work item |
@@ -194,6 +194,26 @@ work_item_types = ["Bug", "User Story", "Task", "Epic", "Feature"]
 include_comments = false
 include_attachments = false  # set to true to download file attachments and inline images
 ```
+
+### Multiple Projects
+
+One data dir can hold several projects from the same organization:
+
+```toml
+[organization]
+url = "https://dev.azure.com/yourorg"
+project = "Alpha"              # default project for create/update/comments/links and wiki
+projects = ["Alpha", "Beta"]   # or ["*"] for every project you can see
+```
+
+```bash
+ado-search sync                    # syncs every configured project
+ado-search sync --project Beta     # just one
+ado-search search "timeout" --project Beta
+ado-search grep "retry" --project Alpha
+```
+
+Each project keeps its own incremental watermark under `[sync.last_sync_by_project]`. Wiki pages are synced for the default project only.
 
 ## Auth Methods
 

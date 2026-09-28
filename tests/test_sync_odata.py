@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from ado_search.db import Database
 from ado_search.jsonl import read_jsonl
 from ado_search.runner import CommandResult
@@ -362,3 +364,83 @@ def test_sync_via_odata_full_sync_keeps_other_project_items(tmp_path):
 
     items = read_jsonl(wi_jsonl, key="id")
     assert set(items) == {100, 900}
+
+
+import re
+
+import ado_search.sync_odata as sync_odata_mod
+from ado_search.sync_odata import next_page_url
+
+
+def test_next_page_url_prefers_next_link():
+    url, skip = next_page_url({"value": [1, 2], "@odata.nextLink": "https://x/next"},
+                              top=2, skip=0, build_url=lambda s: f"skip={s}")
+    assert (url, skip) == ("https://x/next", 0)
+
+
+def test_next_page_url_full_page_advances_skip():
+    assert next_page_url({"value": [1, 2]}, top=2, skip=4,
+                         build_url=lambda s: f"skip={s}") == ("skip=6", 6)
+
+
+def test_next_page_url_short_or_empty_page_stops():
+    assert next_page_url({"value": [1]}, top=2, skip=0, build_url=str) == (None, 0)
+    assert next_page_url({"value": []}, top=2, skip=0, build_url=str) == (None, 0)
+
+
+def _odata_item(i):
+    return {"WorkItemId": i, "Title": f"item {i}", "WorkItemType": "Bug", "State": "New",
+            "Area": {"AreaPath": "MyProject"}}
+
+
+def test_sync_via_odata_pages_with_skip(tmp_path, monkeypatch):
+    monkeypatch.setattr(sync_odata_mod, "ODATA_PAGE_SIZE", 2)
+    data_dir = tmp_path / ".ado-search"
+    data_dir.mkdir()
+    pages = {0: [1, 2], 2: [3, 4], 4: [5]}
+    skips = []
+
+    async def fake_run(cmd, **kwargs):
+        cmd_str = " ".join(str(c) for c in cmd)
+        skip = int(re.search(r"\$skip=(\d+)", cmd_str).group(1))
+        skips.append(skip)
+        body = json.dumps({"value": [_odata_item(i) for i in pages[skip]]})
+        return CommandResult(command=cmd, returncode=0, stdout=body, stderr="")
+
+    with patch("ado_search.runner.run_command", side_effect=fake_run):
+        stats = asyncio.run(sync_via_odata(
+            org="https://dev.azure.com/contoso", project="MyProject", auth_method="az-cli",
+            data_dir=data_dir, work_item_types=["Bug"], area_paths=[], states=[],
+            last_sync="", dry_run=False,
+        ))
+
+    assert stats["fetched"] == 5
+    assert skips == [0, 2, 4]
+    assert set(read_jsonl(data_dir / "work-items.jsonl", key="id")) == {1, 2, 3, 4, 5}
+
+
+def test_sync_via_odata_raises_on_pagination_failure(tmp_path, monkeypatch):
+    from ado_search.jsonl import write_jsonl
+    monkeypatch.setattr(sync_odata_mod, "ODATA_PAGE_SIZE", 2)
+    data_dir = tmp_path / ".ado-search"
+    data_dir.mkdir()
+    wi_jsonl = data_dir / "work-items.jsonl"
+    write_jsonl(wi_jsonl, {9: {"id": 9, "title": "keep me", "project": "MyProject"}}, sort_key="id")
+
+    async def fake_run(cmd, **kwargs):
+        cmd_str = " ".join(str(c) for c in cmd)
+        if "$skip=0" in cmd_str:
+            body = json.dumps({"value": [_odata_item(1), _odata_item(2)]})
+            return CommandResult(command=cmd, returncode=0, stdout=body, stderr="")
+        return CommandResult(command=cmd, returncode=1, stdout="", stderr="500 Internal Server Error")
+
+    with patch("ado_search.runner.run_command", side_effect=fake_run):
+        with pytest.raises(RuntimeError, match="pagination"):
+            asyncio.run(sync_via_odata(
+                org="https://dev.azure.com/contoso", project="MyProject", auth_method="az-cli",
+                data_dir=data_dir, work_item_types=["Bug"], area_paths=[], states=[],
+                last_sync="", dry_run=False,
+            ))
+
+    # Nothing finalized: the existing item was not deleted
+    assert set(read_jsonl(wi_jsonl, key="id")) == {9}

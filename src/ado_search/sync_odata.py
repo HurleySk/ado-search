@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import Callable
 from urllib.parse import quote, urlparse
 
 import click
@@ -90,6 +91,22 @@ def build_odata_url(
     return base_url + "?" + "&".join(params)
 
 
+def next_page_url(
+    page: dict, *, top: int, skip: int, build_url: Callable[[int], str],
+) -> tuple[str | None, int]:
+    """Return (url, skip) for the next page, or (None, skip) when done.
+
+    Analytics only returns @odata.nextLink for server-driven paging. With a
+    client-driven $top it returns none, so advance $skip while pages are full.
+    """
+    link = page.get("@odata.nextLink")
+    if link:
+        return link, skip
+    if len(page.get("value", [])) >= top:
+        return build_url(skip + top), skip + top
+    return None, skip
+
+
 def odata_to_ado_format(odata_item: dict, project: str = "") -> dict:
     """Transform OData analytics response item to ADO REST API format."""
     assigned_to = odata_item.get("AssignedTo")
@@ -144,19 +161,23 @@ async def sync_via_odata(
     dry_run: bool = False,
 ) -> SyncResult | None:
     """Sync work items via OData analytics. Returns stats dict or None if OData unavailable."""
-    def _url(extra_select: list[str] | None) -> str:
+    top = ODATA_PAGE_SIZE
+
+    def _url(extra_select: list[str] | None, skip: int = 0) -> str:
         return build_odata_url(
             org, project,
             work_item_types=work_item_types,
             area_paths=area_paths,
             states=states,
             last_sync=last_sync,
+            top=top,
+            skip=skip,
             extra_select=extra_select,
         )
 
-    async def _probe(url: str):
+    async def _get(url: str, retries: int = 3):
         return await run_operation(
-            auth_method, OP_ODATA_QUERY, org=org, project=project, pat=pat, url=url, retries=1,
+            auth_method, OP_ODATA_QUERY, org=org, project=project, pat=pat, url=url, retries=retries,
         )
 
     def _is_unavailable(stderr: str) -> bool:
@@ -164,11 +185,13 @@ async def sync_via_odata(
         return any(s in lowered for s in ["403", "401", "forbidden", "unauthorized", "not available"])
 
     # Probe first page to check if OData is available
-    result = await _probe(_url(ODATA_CUSTOM_SELECT))
+    extra: list[str] | None = ODATA_CUSTOM_SELECT
+    result = await _get(_url(extra), retries=1)
 
     if result.returncode != 0 and not _is_unavailable(result.stderr):
         click.echo("  Custom fields unavailable in analytics, retrying without them...")
-        result = await _probe(_url(None))
+        extra = None
+        result = await _get(_url(extra), retries=1)
 
     if result.returncode != 0:
         if _is_unavailable(result.stderr):
@@ -180,19 +203,21 @@ async def sync_via_odata(
         return {"fetched": 0, "errors": 0}
 
     data = result.parse_json()
-    next_link = data.get("@odata.nextLink")
+
+    def _next(page: dict, skip: int) -> tuple[str | None, int]:
+        return next_page_url(page, top=top, skip=skip, build_url=lambda s: _url(extra, s))
+
+    next_url, skip = _next(data, 0)
 
     if dry_run:
         all_ids = [item.get("WorkItemId", 0) for item in data.get("value", [])]
-        while next_link:
-            result = await run_operation(
-                auth_method, OP_ODATA_QUERY, org=org, project=project, pat=pat, url=next_link,
-            )
+        while next_url:
+            result = await _get(next_url)
             if result.returncode != 0:
                 break
             page_data = result.parse_json()
             all_ids.extend(item.get("WorkItemId", 0) for item in page_data.get("value", []))
-            next_link = page_data.get("@odata.nextLink")
+            next_url, skip = _next(page_data, skip)
         click.echo(f"Would process {len(all_ids)} work items: {all_ids[:20]}...")
         return {"fetched": 0, "errors": 0, "dry_run": True, "would_fetch": len(all_ids)}
 
@@ -215,16 +240,15 @@ async def sync_via_odata(
 
     _process_page(data.get("value", []))
 
-    while next_link:
-        result = await run_operation(
-            auth_method, OP_ODATA_QUERY, org=org, project=project, pat=pat, url=next_link,
-        )
+    while next_url:
+        result = await _get(next_url)
         if result.returncode != 0:
-            click.echo(f"  Warning: OData pagination failed: {result.stderr}", err=True)
-            break
+            # Finalizing partial data would drop unfetched items (full sync)
+            # or skip them past the watermark (incremental). Abort instead.
+            raise RuntimeError(f"OData pagination failed after {fetched} items: {result.stderr}")
         page_data = result.parse_json()
         _process_page(page_data.get("value", []))
-        next_link = page_data.get("@odata.nextLink")
+        next_url, skip = _next(page_data, skip)
         click.echo(f"  Processed {fetched} items via OData...")
 
     click.echo(f"  OData: {fetched} work items processed")

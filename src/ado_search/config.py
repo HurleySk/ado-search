@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 import sys
 from pathlib import Path
 
@@ -46,6 +48,19 @@ def load_config(path: Path) -> dict:
         return tomllib.load(f)
 
 
+_BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _toml_key(key: str) -> str:
+    """Quote keys that are not bare TOML keys (e.g. project names with spaces)."""
+    return key if _BARE_KEY.match(key) else json.dumps(key, ensure_ascii=False)
+
+
+def _toml_str(value: str) -> str:
+    """TOML basic string. JSON string escapes are a subset of TOML's."""
+    return json.dumps(value, ensure_ascii=False)
+
+
 def _dict_to_toml(d: dict, prefix: str = "") -> str:
     """Minimal TOML serializer for our config structure."""
     lines: list[str] = []
@@ -53,17 +68,18 @@ def _dict_to_toml(d: dict, prefix: str = "") -> str:
 
     for key, value in d.items():
         if isinstance(value, dict):
-            full_key = f"{prefix}{key}" if not prefix else f"{prefix}.{key}"
+            k = _toml_key(key)
+            full_key = k if not prefix else f"{prefix}.{k}"
             tables.append((full_key, value))
         elif isinstance(value, list):
-            items = ", ".join(f'"{v}"' if isinstance(v, str) else str(v) for v in value)
-            lines.append(f"{key} = [{items}]")
+            items = ", ".join(_toml_str(v) if isinstance(v, str) else str(v) for v in value)
+            lines.append(f"{_toml_key(key)} = [{items}]")
         elif isinstance(value, str):
-            lines.append(f'{key} = "{value}"')
+            lines.append(f"{_toml_key(key)} = {_toml_str(value)}")
         elif isinstance(value, bool):
-            lines.append(f"{key} = {'true' if value else 'false'}")
+            lines.append(f"{_toml_key(key)} = {'true' if value else 'false'}")
         elif isinstance(value, int):
-            lines.append(f"{key} = {value}")
+            lines.append(f"{_toml_key(key)} = {value}")
 
     result = "\n".join(lines)
     for table_key, table_val in tables:

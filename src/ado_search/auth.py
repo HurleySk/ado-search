@@ -23,6 +23,9 @@ OP_ADD_COMMENT = "add-comment"
 OP_ADD_LINK = "add-link"
 OP_UPLOAD_ATTACHMENT = "upload-attachment"
 OP_IDENTITY_LOOKUP = "identity-lookup"
+OP_PROJECT_LIST = "project-list"
+
+PROJECT_LIST_TOP = 1000
 
 
 @dataclass
@@ -189,6 +192,10 @@ OPERATIONS: dict[str, OperationDef] = {
         path="_apis/IdentityPicker/Identities",
         query_params=["api-version=5.1-preview.1"],
         has_body=True,
+    ),
+    OP_PROJECT_LIST: OperationDef(
+        path="_apis/projects",
+        query_params=[f"$top={PROJECT_LIST_TOP}", "api-version=7.1"],
     ),
 }
 

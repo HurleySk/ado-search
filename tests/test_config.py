@@ -36,3 +36,23 @@ def test_load_config_file_not_found(tmp_path):
         assert False, "Should have raised FileNotFoundError"
     except FileNotFoundError:
         pass
+
+
+def test_save_quotes_non_bare_keys(tmp_path):
+    cfg = default_config()
+    cfg["sync"]["last_sync_by_project"] = {"Wave Two": "2026-09-01", "Alpha": "2026-09-02"}
+    path = tmp_path / "config.toml"
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded["sync"]["last_sync_by_project"] == {"Wave Two": "2026-09-01", "Alpha": "2026-09-02"}
+
+
+def test_save_escapes_backslashes_in_strings(tmp_path):
+    cfg = default_config()
+    cfg["sync"]["area_paths"] = [r"Alpha\Web", r'Alpha\"quoted"']
+    cfg["organization"]["projects"] = ["Alpha", "Beta Two"]
+    path = tmp_path / "config.toml"
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded["sync"]["area_paths"] == [r"Alpha\Web", r'Alpha\"quoted"']
+    assert loaded["organization"]["projects"] == ["Alpha", "Beta Two"]

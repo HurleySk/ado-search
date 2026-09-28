@@ -9,6 +9,7 @@ import click
 
 from ado_search.auth import OP_ODATA_QUERY
 from ado_search.markdown import CUSTOM_TEXT_FIELDS
+from ado_search.projects import record_project
 from ado_search.runner import SyncResult, run_operation
 from ado_search.sync_common import finalize_jsonl, prepare_work_item
 
@@ -232,6 +233,7 @@ async def sync_via_odata(
     finalize_jsonl(
         wi_jsonl, fetched_records,
         key="id", sort_key="id", is_incremental=bool(last_sync),
+        scope=lambda r: record_project(r) in ("", project),
     )
 
     return {"fetched": fetched, "errors": errors}

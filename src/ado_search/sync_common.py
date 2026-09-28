@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import click
 
-from ado_search.jsonl import merge_jsonl, read_jsonl, write_jsonl
+from ado_search.jsonl import read_jsonl, write_jsonl
 from ado_search.markdown import CUSTOM_TEXT_FIELDS, extract_work_item_metadata, strip_html
 from ado_search.projects import project_from_area
 
@@ -104,6 +104,16 @@ def split_results(
     return records, errors
 
 
+def _carry_forward_state_history(existing: dict[Any, dict], fetched: dict[Any, dict]) -> None:
+    """Keep previously captured state history when a fetch path doesn't provide one."""
+    for k, rec in fetched.items():
+        if "state_history" in rec:
+            continue
+        old = existing.get(k)
+        if old and old.get("state_history"):
+            rec["state_history"] = old["state_history"]
+
+
 def finalize_jsonl(
     jsonl_path: Path,
     fetched_records: dict[Any, dict],
@@ -112,30 +122,30 @@ def finalize_jsonl(
     sort_key: str,
     is_incremental: bool,
     remote_keys: set | None = None,
+    scope: Callable[[dict], bool] | None = None,
 ) -> set:
     """Write JSONL with orphan detection. Returns set of orphaned keys.
 
-    For incremental syncs, merges fetched_records into existing JSONL.
-    For full syncs, detects orphans by comparing existing keys against
-    remote_keys (if provided) or fetched_records keys.
+    Incremental syncs merge fetched_records into the existing JSONL. Full syncs
+    drop existing records missing from remote_keys (if given) or fetched_records;
+    when ``scope`` is given, only existing records for which it returns True are
+    orphan candidates (e.g. the project being synced).
     """
+    existing = read_jsonl(jsonl_path, key=key)
+    _carry_forward_state_history(existing, fetched_records)
+
     if is_incremental:
-        all_items = merge_jsonl(jsonl_path, fetched_records, key=key)
-        write_jsonl(jsonl_path, all_items, sort_key=sort_key)
+        existing.update(fetched_records)
+        write_jsonl(jsonl_path, existing, sort_key=sort_key)
         return set()
 
-    existing = read_jsonl(jsonl_path, key=key)
+    candidates = {k for k, v in existing.items() if scope(v)} if scope else set(existing)
     compare_keys = remote_keys if remote_keys is not None else set(fetched_records.keys())
-    orphans = set(existing.keys()) - compare_keys
+    orphans = candidates - compare_keys
     if orphans:
         click.echo(f"  Removing {len(orphans)} orphaned items")
 
-    if remote_keys is not None:
-        # Wiki pattern: keep non-orphaned existing, overlay fetched
-        all_items = {k: v for k, v in existing.items() if k in compare_keys}
-        all_items.update(fetched_records)
-    else:
-        all_items = fetched_records
-
+    all_items = {k: v for k, v in existing.items() if k not in orphans}
+    all_items.update(fetched_records)
     write_jsonl(jsonl_path, all_items, sort_key=sort_key)
     return orphans

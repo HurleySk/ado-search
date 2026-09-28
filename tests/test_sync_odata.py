@@ -336,3 +336,29 @@ def test_odata_to_ado_format_sets_project():
     ado = odata_to_ado_format(item, project="Beta")
     assert ado["fields"]["System.TeamProject"] == "Beta"
     assert prepare_work_item(ado)["project"] == "Beta"
+
+
+def test_sync_via_odata_full_sync_keeps_other_project_items(tmp_path):
+    from ado_search.jsonl import write_jsonl
+    data_dir = tmp_path / ".ado-search"
+    data_dir.mkdir()
+    wi_jsonl = data_dir / "work-items.jsonl"
+    write_jsonl(wi_jsonl, {
+        900: {"id": 900, "title": "beta item", "project": "Beta", "area": "Beta"},
+        901: {"id": 901, "title": "stale alpha", "project": "MyProject", "area": "MyProject"},
+    }, sort_key="id")
+    page = json.dumps({"value": [{"WorkItemId": 100, "Title": "new", "WorkItemType": "Bug",
+                                  "State": "New", "Area": {"AreaPath": "MyProject"}}]})
+
+    async def fake_run(cmd, **kwargs):
+        return CommandResult(command=cmd, returncode=0, stdout=page, stderr="")
+
+    with patch("ado_search.runner.run_command", side_effect=fake_run):
+        asyncio.run(sync_via_odata(
+            org="https://dev.azure.com/contoso", project="MyProject", auth_method="az-cli",
+            data_dir=data_dir, work_item_types=["Bug"], area_paths=[], states=[],
+            last_sync="", dry_run=False,
+        ))
+
+    items = read_jsonl(wi_jsonl, key="id")
+    assert set(items) == {100, 900}

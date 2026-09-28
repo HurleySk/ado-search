@@ -119,3 +119,70 @@ def test_prepare_work_item_falls_back_to_area_root():
         "System.AreaPath": r"Alpha\Web",
     }}
     assert prepare_work_item(raw)["project"] == "Alpha"
+
+
+from ado_search.projects import record_project
+
+
+def _rec(i, project=None, area="", **extra):
+    r = {"id": i, "title": f"item {i}", "area": area}
+    if project is not None:
+        r["project"] = project
+    r.update(extra)
+    return r
+
+
+def test_finalize_full_sync_scope_keeps_other_projects(tmp_path):
+    path = tmp_path / "work-items.jsonl"
+    write_jsonl(path, {1: _rec(1, "Alpha"), 2: _rec(2, "Beta"), 3: _rec(3, "Alpha")}, sort_key="id")
+    orphans = finalize_jsonl(
+        path, {1: _rec(1, "Alpha")}, key="id", sort_key="id", is_incremental=False,
+        scope=lambda r: record_project(r) == "Alpha",
+    )
+    assert orphans == {3}
+    assert set(read_jsonl(path, key="id")) == {1, 2}
+
+
+def test_finalize_scope_falls_back_to_area_for_old_records(tmp_path):
+    path = tmp_path / "work-items.jsonl"
+    write_jsonl(path, {7: _rec(7, area=r"Beta\Web"), 8: _rec(8, area=r"Alpha\Web")}, sort_key="id")
+    finalize_jsonl(
+        path, {}, key="id", sort_key="id", is_incremental=False,
+        scope=lambda r: record_project(r) == "Alpha",
+    )
+    assert set(read_jsonl(path, key="id")) == {7}
+
+
+def test_finalize_scope_treats_projectless_records_as_in_scope(tmp_path):
+    # Records with no project and no area predate this change; the sync scope
+    # lambdas treat "" as belonging to the project being synced (old behavior).
+    path = tmp_path / "work-items.jsonl"
+    write_jsonl(path, {5: _rec(5, area=""), 6: _rec(6, "Beta")}, sort_key="id")
+    finalize_jsonl(path, {}, key="id", sort_key="id", is_incremental=False,
+                   scope=lambda r: record_project(r) in ("", "Alpha"))
+    assert set(read_jsonl(path, key="id")) == {6}
+
+
+def test_finalize_full_sync_without_scope_drops_all_unfetched(tmp_path):
+    path = tmp_path / "work-items.jsonl"
+    write_jsonl(path, {1: _rec(1, "Alpha"), 2: _rec(2, "Beta")}, sort_key="id")
+    finalize_jsonl(path, {1: _rec(1, "Alpha")}, key="id", sort_key="id", is_incremental=False)
+    assert set(read_jsonl(path, key="id")) == {1}
+
+
+def test_finalize_incremental_preserves_state_history(tmp_path):
+    path = tmp_path / "work-items.jsonl"
+    history = [{"from": "New", "to": "Active", "date": "2026-01-02", "by": "a"}]
+    write_jsonl(path, {1: _rec(1, "Alpha", state_history=history)}, sort_key="id")
+    finalize_jsonl(path, {1: _rec(1, "Alpha", title="renamed")}, key="id", sort_key="id", is_incremental=True)
+    item = read_jsonl(path, key="id")[1]
+    assert item["title"] == "renamed"
+    assert item["state_history"] == history
+
+
+def test_finalize_does_not_override_fresh_state_history(tmp_path):
+    path = tmp_path / "work-items.jsonl"
+    old = [{"from": "New", "to": "Active", "date": "2026-01-02", "by": "a"}]
+    write_jsonl(path, {1: _rec(1, "Alpha", state_history=old)}, sort_key="id")
+    finalize_jsonl(path, {1: _rec(1, "Alpha", state_history=[])}, key="id", sort_key="id", is_incremental=True)
+    assert read_jsonl(path, key="id")[1]["state_history"] == []

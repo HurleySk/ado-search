@@ -7,6 +7,7 @@ from pathlib import Path
 import click
 
 from ado_search.auth import OP_COMMENTS, OP_QUERY, OP_SHOW, OP_UPDATES
+from ado_search.projects import record_project
 from ado_search.runner import SyncResult, fetch_and_parse, run_operation
 from ado_search.sync_common import extract_state_history, finalize_jsonl, prepare_work_item, split_results
 
@@ -343,6 +344,7 @@ async def _fetch_and_finalize(
     include_comments: bool = False,
     include_attachments: bool = False,
     is_incremental: bool = True,
+    scope_project: str | None = None,
 ) -> SyncResult:
     """Fetch work items in parallel, write JSONL, return stats."""
     semaphore = asyncio.Semaphore(max_concurrent)
@@ -370,6 +372,7 @@ async def _fetch_and_finalize(
     finalize_jsonl(
         data_dir / "work-items.jsonl", fetched_records,
         key="id", sort_key="id", is_incremental=is_incremental,
+        scope=(lambda r: record_project(r) in ("", scope_project)) if scope_project else None,
     )
 
     return {"fetched": len(fetched_records), "errors": len(errors)}
@@ -461,4 +464,5 @@ async def sync_work_items(
         include_comments=include_comments,
         include_attachments=include_attachments,
         is_incremental=bool(last_sync),
+        scope_project=project,
     )

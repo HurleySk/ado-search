@@ -89,7 +89,7 @@ def build_odata_url(
     return base_url + "?" + "&".join(params)
 
 
-def odata_to_ado_format(odata_item: dict) -> dict:
+def odata_to_ado_format(odata_item: dict, project: str = "") -> dict:
     """Transform OData analytics response item to ADO REST API format."""
     assigned_to = odata_item.get("AssignedTo")
     if assigned_to and isinstance(assigned_to, dict):
@@ -105,6 +105,7 @@ def odata_to_ado_format(odata_item: dict) -> dict:
     return {
         "id": odata_item["WorkItemId"],
         "fields": {
+            "System.TeamProject": project,
             "System.Title": odata_item.get("Title", ""),
             "System.WorkItemType": odata_item.get("WorkItemType", ""),
             "System.State": odata_item.get("State", ""),
@@ -203,7 +204,7 @@ async def sync_via_odata(
         nonlocal fetched, errors
         for item in items:
             try:
-                ado_format = odata_to_ado_format(item)
+                ado_format = odata_to_ado_format(item, project=project)
                 record = prepare_work_item(ado_format, comments=None)
                 fetched_records[record["id"]] = record
                 fetched += 1

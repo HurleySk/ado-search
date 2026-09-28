@@ -327,3 +327,12 @@ def test_sync_via_odata_dry_run(tmp_path):
     # No JSONL should be written in dry run
     assert not (data_dir / "work-items.jsonl").exists()
     db.close()
+
+
+def test_odata_to_ado_format_sets_project():
+    from ado_search.sync_common import prepare_work_item
+    item = {"WorkItemId": 5, "Title": "x", "WorkItemType": "Bug", "State": "New",
+            "Area": {"AreaPath": r"Other\Area"}}
+    ado = odata_to_ado_format(item, project="Beta")
+    assert ado["fields"]["System.TeamProject"] == "Beta"
+    assert prepare_work_item(ado)["project"] == "Beta"

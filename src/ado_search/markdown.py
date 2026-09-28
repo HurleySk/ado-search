@@ -78,6 +78,7 @@ def extract_work_item_metadata(raw: dict) -> dict:
     }
     return {
         "id": raw["id"],
+        "project": fields.get("System.TeamProject", "") or "",
         "title": fields.get("System.Title", ""),
         "type": fields.get("System.WorkItemType", ""),
         "state": fields.get("System.State", ""),

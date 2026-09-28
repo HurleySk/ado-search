@@ -8,6 +8,7 @@ import click
 
 from ado_search.jsonl import merge_jsonl, read_jsonl, write_jsonl
 from ado_search.markdown import CUSTOM_TEXT_FIELDS, extract_work_item_metadata, strip_html
+from ado_search.projects import project_from_area
 
 
 
@@ -22,6 +23,7 @@ def prepare_work_item(
     meta = extract_work_item_metadata(raw)
     record = {
         "id": meta["id"],
+        "project": meta["project"] or project_from_area(meta["area"]),
         "title": meta["title"],
         "type": meta["type"],
         "state": meta["state"],

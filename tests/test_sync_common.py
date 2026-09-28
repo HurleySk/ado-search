@@ -103,3 +103,19 @@ def test_prepare_work_item_custom_notes_absent():
     record = prepare_work_item({"id": 1, "fields": {"System.Title": "T"}})
     assert record["dev_notes"] == ""
     assert record["notes"] == ""
+
+
+def test_prepare_work_item_takes_team_project():
+    raw = {"id": 1, "fields": {
+        "System.Title": "t", "System.WorkItemType": "Bug", "System.State": "New",
+        "System.AreaPath": r"Alpha\Web", "System.TeamProject": "Beta",
+    }}
+    assert prepare_work_item(raw)["project"] == "Beta"
+
+
+def test_prepare_work_item_falls_back_to_area_root():
+    raw = {"id": 2, "fields": {
+        "System.Title": "t", "System.WorkItemType": "Bug", "System.State": "New",
+        "System.AreaPath": r"Alpha\Web",
+    }}
+    assert prepare_work_item(raw)["project"] == "Alpha"

@@ -31,11 +31,14 @@ class _Conn:
         self.data_path = data_path
 
 
-def _load_conn(data_dir: str | None) -> _Conn:
+def _load_conn(data_dir: str | None, *, require_project: bool = True) -> _Conn:
     """Load config, resolve PAT, and return connection info.
 
-    Exits with error if not initialized.
+    Exits with error if not initialized, or if a default project is required
+    but the config only lists projects = ["*"].
     """
+    from ado_search.projects import default_project
+
     data_path = Path(data_dir) if data_dir else _default_data_dir()
     config_path = data_path / "config.toml"
 
@@ -45,7 +48,13 @@ def _load_conn(data_dir: str | None) -> _Conn:
 
     cfg = load_config(config_path)
     org = cfg["organization"]["url"]
-    project = cfg["organization"]["project"]
+    try:
+        project = default_project(cfg)
+    except ValueError as e:
+        if require_project:
+            click.echo(f"Error: {e}", err=True)
+            raise SystemExit(1)
+        project = ""
     auth_method = cfg["auth"]["method"]
 
     pat = ""
@@ -89,9 +98,9 @@ def _open_db(data_path: Path):
 
 
 @contextmanager
-def _conn_db(data_dir: str | None):
+def _conn_db(data_dir: str | None, *, require_project: bool = True):
     """Load connection, open DB, ensure index is current."""
-    conn = _load_conn(data_dir)
+    conn = _load_conn(data_dir, require_project=require_project)
     with _open_db(conn.data_path) as db:
         _ensure_index(conn.data_path, db)
         yield conn, db
@@ -147,50 +156,90 @@ def init(org: str, project: str, auth_method: str, pat: str | None, data_dir: st
 @click.option("--include-attachments", is_flag=True, default=False,
               help="Download attachments (overrides config when set)")
 @click.option("--full", is_flag=True, help="Ignore last_sync and re-fetch all items")
-def sync(data_dir: str | None, dry_run: bool, include_attachments: bool, full: bool):
+@click.option("--project", "only_projects", multiple=True,
+              help="Sync only this project (repeatable; must be configured)")
+def sync(data_dir: str | None, dry_run: bool, include_attachments: bool, full: bool,
+         only_projects: tuple[str, ...]):
     """Sync work items and wiki pages from Azure DevOps."""
-    with _conn_db(data_dir) as (conn, db):
+    from ado_search.projects import (
+        ALL_PROJECTS, configured_projects, expand_projects,
+        fetch_remote_projects, record_watermark, watermark_for,
+    )
+
+    with _conn_db(data_dir, require_project=False) as (conn, db):
         sync_cfg = conn.cfg["sync"]
         effective_attachments = include_attachments or sync_cfg.get("include_attachments", False)
-        last_sync = "" if full else sync_cfg.get("last_sync", "")
+
+        projects = configured_projects(conn.cfg)
+        if ALL_PROJECTS in projects:
+            remote = asyncio.run(fetch_remote_projects(
+                auth_method=conn.auth_method, org=conn.org, pat=conn.pat,
+            ))
+            projects = expand_projects(projects, remote)
+        if only_projects:
+            unknown = sorted(set(only_projects) - set(projects))
+            if unknown:
+                click.echo(f"Error: not a configured project: {', '.join(unknown)}", err=True)
+                raise SystemExit(2)
+            projects = [p for p in projects if p in only_projects]
+        if not projects:
+            click.echo("Error: no projects configured.", err=True)
+            raise SystemExit(1)
 
         from ado_search.sync_workitems import sync_work_items
         from ado_search.sync_wiki import sync_wiki
 
         suffix = " (with attachments)" if effective_attachments else ""
-        click.echo(f"Syncing work items...{suffix}")
-        wi_stats = asyncio.run(sync_work_items(
-            org=conn.org, project=conn.project,
-            auth_method=conn.auth_method, pat=conn.pat,
-            data_dir=conn.data_path,
-            work_item_types=sync_cfg.get("work_item_types", []),
-            area_paths=sync_cfg.get("area_paths", []),
-            states=sync_cfg.get("states", []),
-            last_sync=last_sync,
-            max_concurrent=sync_cfg.get("performance", {}).get("max_concurrent", 5),
-            include_comments=sync_cfg.get("include_comments", False),
-            include_attachments=effective_attachments,
-            dry_run=dry_run,
-        ))
-        click.echo(f"  Work items: {wi_stats['fetched']} synced, {wi_stats['errors']} errors")
+        failed: list[str] = []
+        for project in projects:
+            last_sync = "" if full else watermark_for(conn.cfg, project)
+            click.echo(f"Syncing work items for {project}...{suffix}")
+            try:
+                wi_stats = asyncio.run(sync_work_items(
+                    org=conn.org, project=project,
+                    auth_method=conn.auth_method, pat=conn.pat,
+                    data_dir=conn.data_path,
+                    work_item_types=sync_cfg.get("work_item_types", []),
+                    area_paths=sync_cfg.get("area_paths", []),
+                    states=sync_cfg.get("states", []),
+                    last_sync=last_sync,
+                    max_concurrent=sync_cfg.get("performance", {}).get("max_concurrent", 5),
+                    include_comments=sync_cfg.get("include_comments", False),
+                    include_attachments=effective_attachments,
+                    dry_run=dry_run,
+                ))
+            except RuntimeError as e:
+                click.echo(f"  Error syncing {project}: {e}", err=True)
+                failed.append(project)
+                continue
+            click.echo(f"  Work items: {wi_stats['fetched']} synced, {wi_stats['errors']} errors")
+            if not dry_run:
+                record_watermark(conn.cfg, project, datetime.now(timezone.utc).strftime("%Y-%m-%d"))
 
-        click.echo("Syncing wiki pages...")
-        wiki_stats = asyncio.run(sync_wiki(
-            org=conn.org, project=conn.project,
-            auth_method=conn.auth_method, pat=conn.pat,
-            data_dir=conn.data_path,
-            wiki_names=sync_cfg.get("wiki_names", []),
-            max_concurrent=sync_cfg.get("performance", {}).get("max_concurrent", 5),
-            dry_run=dry_run,
-        ))
-        click.echo(f"  Wiki pages: {wiki_stats['fetched']} synced, {wiki_stats['errors']} errors")
+        if conn.project and conn.project in projects:
+            click.echo("Syncing wiki pages...")
+            wiki_stats = asyncio.run(sync_wiki(
+                org=conn.org, project=conn.project,
+                auth_method=conn.auth_method, pat=conn.pat,
+                data_dir=conn.data_path,
+                wiki_names=sync_cfg.get("wiki_names", []),
+                max_concurrent=sync_cfg.get("performance", {}).get("max_concurrent", 5),
+                dry_run=dry_run,
+            ))
+            click.echo(f"  Wiki pages: {wiki_stats['fetched']} synced, {wiki_stats['errors']} errors")
+        elif not conn.project:
+            click.echo("Skipping wiki pages (no default project; set organization.project)")
 
         if not dry_run:
             wi_jsonl = conn.data_path / "work-items.jsonl"
             wiki_jsonl = conn.data_path / "wiki-pages.jsonl"
             db.reindex_from_jsonl(wi_jsonl, wiki_jsonl)
-            conn.cfg["sync"]["last_sync"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             save_config(conn.cfg, conn.data_path / "config.toml")
+
+        if failed:
+            click.echo(f"Sync finished with errors in: {', '.join(failed)}", err=True)
+            raise SystemExit(1)
+        if not dry_run:
             click.echo("Sync complete.")
 
 

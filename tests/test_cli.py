@@ -192,3 +192,95 @@ def test_grep_project_filter(tmp_path):
                                        "--format", "json", "--data-dir", str(data_dir)])
     assert result.exit_code == 0, result.output
     assert [r["id"] for r in json.loads(result.output)] == [1]
+
+
+from ado_search.config import default_config, load_config, save_config
+
+
+def _write_config(data_dir, *, project="", projects=None, by_project=None):
+    data_dir.mkdir(parents=True, exist_ok=True)
+    cfg = default_config()
+    cfg["organization"]["url"] = "https://dev.azure.com/contoso"
+    cfg["organization"]["project"] = project
+    if projects is not None:
+        cfg["organization"]["projects"] = projects
+    if by_project is not None:
+        cfg["sync"]["last_sync_by_project"] = by_project
+    save_config(cfg, data_dir / "config.toml")
+
+
+def _run_sync(data_dir, *extra, wi_side_effect=None):
+    wi = AsyncMock(return_value={"fetched": 1, "errors": 0}, side_effect=wi_side_effect)
+    wiki = AsyncMock(return_value={"fetched": 0, "errors": 0})
+    with (
+        patch("ado_search.sync_workitems.sync_work_items", wi),
+        patch("ado_search.sync_wiki.sync_wiki", wiki),
+    ):
+        result = CliRunner().invoke(main, ["sync", "--data-dir", str(data_dir), *extra])
+    return result, wi, wiki
+
+
+def test_sync_multiple_projects_uses_per_project_watermark(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    _write_config(data_dir, project="Alpha", projects=["Alpha", "Beta"],
+                  by_project={"Alpha": "2026-09-01"})
+    result, wi, wiki = _run_sync(data_dir)
+    assert result.exit_code == 0, result.output
+    calls = {c.kwargs["project"]: c.kwargs["last_sync"] for c in wi.call_args_list}
+    assert calls == {"Alpha": "2026-09-01", "Beta": ""}
+    assert wiki.call_args.kwargs["project"] == "Alpha"
+    saved = load_config(data_dir / "config.toml")
+    assert set(saved["sync"]["last_sync_by_project"]) == {"Alpha", "Beta"}
+
+
+def test_sync_project_option_restricts(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    _write_config(data_dir, project="Alpha", projects=["Alpha", "Beta"])
+    result, wi, wiki = _run_sync(data_dir, "--project", "Beta")
+    assert result.exit_code == 0, result.output
+    assert [c.kwargs["project"] for c in wi.call_args_list] == ["Beta"]
+    wiki.assert_not_called()
+
+
+def test_sync_unknown_project_errors(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    _write_config(data_dir, project="Alpha")
+    result, wi, _ = _run_sync(data_dir, "--project", "Nope")
+    assert result.exit_code == 2
+    assert "Nope" in result.output
+    wi.assert_not_called()
+
+
+def test_sync_star_expands_remote_projects(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    _write_config(data_dir, projects=["*"])
+    remote = AsyncMock(return_value=["Alpha", "Beta"])
+    with patch("ado_search.projects.fetch_remote_projects", remote):
+        result, wi, wiki = _run_sync(data_dir)
+    assert result.exit_code == 0, result.output
+    assert [c.kwargs["project"] for c in wi.call_args_list] == ["Alpha", "Beta"]
+    wiki.assert_not_called()  # no default project with ["*"]
+
+
+def test_sync_failure_in_one_project_continues(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    _write_config(data_dir, project="Alpha", projects=["Alpha", "Beta"])
+
+    async def flaky(**kwargs):
+        if kwargs["project"] == "Alpha":
+            raise RuntimeError("WIQL query failed: 401")
+        return {"fetched": 1, "errors": 0}
+
+    result, wi, _ = _run_sync(data_dir, wi_side_effect=flaky)
+    assert result.exit_code == 1
+    assert "Alpha" in result.output
+    saved = load_config(data_dir / "config.toml")
+    assert set(saved["sync"]["last_sync_by_project"]) == {"Beta"}
+
+
+def test_write_command_requires_default_project(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    _write_config(data_dir, projects=["*"])
+    result = CliRunner().invoke(main, ["list-comments", "1", "--data-dir", str(data_dir)])
+    assert result.exit_code == 1
+    assert "organization.project" in result.output

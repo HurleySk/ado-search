@@ -660,11 +660,14 @@ def update(work_item_id, title, state, reason, description, acceptance_criteria,
 @click.option("--dry-run", is_flag=True, help="Preview without posting")
 @click.option("--no-mentions", is_flag=True,
               help="Skip @mention resolution (post raw text as-is)")
-def add_comment_cmd(work_item_id, text, data_dir, dry_run, no_mentions):
+@click.option("--strict-mentions", is_flag=True,
+              help="Abort without posting if any @mention is unresolved or ambiguous")
+def add_comment_cmd(work_item_id, text, data_dir, dry_run, no_mentions, strict_mentions):
     """Add a comment to an Azure DevOps work item.
 
-    TEXT can be an inline HTML string or @path/to/file.html to read from a file.
-    @DisplayName patterns are auto-resolved to ADO mention links.
+    TEXT can be an inline HTML string or @path/to/file.html to read from a file
+    (start with @@ to post text that begins with a mention, e.g. "@@Jane Doe, see above").
+    @Display Name and @email patterns are auto-resolved to ADO mention links.
     """
     from ado_search.write_workitems import add_comment, resolve_value
 
@@ -677,6 +680,7 @@ def add_comment_cmd(work_item_id, text, data_dir, dry_run, no_mentions):
             data_dir=conn.data_path,
             work_item_id=work_item_id, text=text,
             resolve_mentions_flag=not no_mentions,
+            strict_mentions=strict_mentions,
             dry_run=dry_run,
         ))
 

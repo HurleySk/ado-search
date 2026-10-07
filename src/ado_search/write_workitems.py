@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +30,9 @@ def resolve_value(text: str | None) -> str | None:
     if text.startswith("@"):
         path = Path(text[1:])
         if not path.is_file():
-            raise click.BadParameter(f"File not found: {path}")
+            raise click.BadParameter(
+                f"File not found: {path} (start the text with @@ if it begins with an @mention)"
+            )
         return path.read_text(encoding="utf-8")
     return text
 
@@ -259,31 +263,103 @@ async def update_work_item(
                                     auth_method=auth_method, pat=pat, data_dir=data_dir)
 
 
-_MENTION_RE = re.compile(r'(?<![="\w@.])@(\w[\w.-]+)')
+_MENTION_START_RE = re.compile(r'(?<![="\w@.])@(?=\w)')
+_MENTION_EMAIL_RE = re.compile(r"[\w.+'-]+@[\w-]+(?:\.[\w-]+)+")
+_MENTION_TOKEN_RE = re.compile(r"\([\w.'-]+\)|[\w'-]+(?:\.[\w'-]+)*\.?")
+_MENTION_SEP_RE = re.compile(r" |\xa0|&nbsp;")
+_MENTION_MAX_TOKENS = 5
+# Existing anchors, code blocks, and tags are never scanned for mentions.
+_MENTION_PROTECTED_RE = re.compile(
+    r"<(a|code|pre)\b[^>]*>.*?</\1\s*>|<[^>]*>", re.IGNORECASE | re.DOTALL,
+)
 
 
-def _find_mention_candidates(text: str) -> list[str]:
-    """Extract unique @mention names from text."""
-    seen: set[str] = set()
-    result: list[str] = []
-    for m in _MENTION_RE.finditer(text):
-        name = m.group(1)
-        if name not in seen:
-            seen.add(name)
-            result.append(name)
-    return result
+@dataclass
+class _Mention:
+    start: int  # index of the "@"
+    spans: list[tuple[str, int]]  # (query text, end index), longest first
 
 
-async def _resolve_identity(
-    name: str, *, org: str, auth_method: str, pat: str,
-) -> dict | None:
-    """Resolve a display name to an ADO identity via Identity Picker API."""
+@dataclass
+class MentionResolution:
+    text: str
+    mentioned: list[str] = field(default_factory=list)
+    unresolved: list[str] = field(default_factory=list)
+    ambiguous: dict[str, list[str]] = field(default_factory=dict)
+
+
+def _mention_spans(text: str, pos: int) -> list[tuple[str, int]]:
+    """Candidate name spans starting at ``pos`` (just after ``@``), longest first.
+
+    A name is up to five words separated by single spaces, e.g.
+    ``Jane Q. Doe (CTR)``; an email address is a single span.
+    """
+    m = _MENTION_EMAIL_RE.match(text, pos)
+    if m:
+        return [(m.group(0), m.end())]
+    ends: list[int] = []
+    i = pos
+    while len(ends) < _MENTION_MAX_TOKENS:
+        tok = _MENTION_TOKEN_RE.match(text, i)
+        if not tok:
+            break
+        ends.append(tok.end())
+        sep = _MENTION_SEP_RE.match(text, tok.end())
+        if not sep:
+            break
+        i = sep.end()
+    spans: list[tuple[str, int]] = []
+    for end in reversed(ends):
+        spans.append((text[pos:end], end))
+        if text[end - 1] == "." and end - 1 > pos:
+            spans.append((text[pos:end - 1], end - 1))
+    return spans
+
+
+def _find_mentions(text: str) -> list[_Mention]:
+    """Locate @mentions outside HTML tags, existing anchors, and code blocks."""
+    protected = [m.span() for m in _MENTION_PROTECTED_RE.finditer(text)]
+    mentions: list[_Mention] = []
+    for m in _MENTION_START_RE.finditer(text):
+        if any(a <= m.start() < b for a, b in protected):
+            continue
+        spans = _mention_spans(text, m.end())
+        if spans:
+            mentions.append(_Mention(m.start(), spans))
+    return mentions
+
+
+def _mention_words(value: str) -> list[str]:
+    return value.replace("&nbsp;", " ").replace("\xa0", " ").casefold().split()
+
+
+def _identity_matches(query: str, identity: dict, *, exact: bool = False) -> bool:
+    """True when ``query`` names ``identity`` by whole words, not a bare prefix.
+
+    ``Jane`` and ``Jane Doe`` match ``Jane Doe (CTR)``; ``Jan`` does not. The
+    mail address, or its local part, also matches.
+    """
+    q = _mention_words(query)
+    name = _mention_words(identity.get("displayName", ""))
+    mail = identity.get("mail", "").casefold()
+    if q and mail and " ".join(q) in (mail, mail.split("@")[0]):
+        return True
+    if exact:
+        bare = [w for w in name if not (w.startswith("(") and w.endswith(")"))]
+        return q in (name, bare)
+    return bool(q) and name[:len(q)] == q
+
+
+async def _lookup_identities(
+    query: str, *, org: str, auth_method: str, pat: str,
+) -> list[dict]:
+    """Search ADO identities via the Identity Picker API."""
     body = json.dumps({
-        "query": name,
+        "query": query.replace("&nbsp;", " ").replace("\xa0", " "),
         "identityTypes": ["user"],
         "operationScopes": ["ims"],
         "properties": ["DisplayName", "Mail"],
-        "options": {"MinResults": 1, "MaxResults": 5},
+        "options": {"MinResults": 5, "MaxResults": 10},
     })
     result = await run_operation(
         auth_method, OP_IDENTITY_LOOKUP,
@@ -291,51 +367,97 @@ async def _resolve_identity(
         body=body, content_type="application/json",
     )
     if result.returncode != 0:
-        return None
+        return []
     try:
         data = result.parse_json()
     except (json.JSONDecodeError, ValueError):
-        return None
-    identities = data.get("results", [{}])[0].get("identities", [])
-    if not identities:
-        return None
-    best = identities[0]
-    return {
-        "localId": best.get("localId", ""),
-        "displayName": best.get("displayName", name),
-        "mail": best.get("mail", ""),
-    }
+        return []
+    identities = (data.get("results") or [{}])[0].get("identities") or []
+    return [
+        {
+            "localId": i.get("localId", ""),
+            "displayName": i.get("displayName", ""),
+            "mail": i.get("mail") or "",
+        }
+        for i in identities
+        if i.get("localId")
+    ]
+
+
+def _mention_html(identity: dict) -> str:
+    return (
+        f'<a href="#" data-vss-mention="version:2.0,{identity["localId"]}">'
+        f'@{html.escape(identity["displayName"], quote=False)}</a>'
+    )
+
+
+async def resolve_mention_html(
+    text: str, *, org: str, auth_method: str, pat: str,
+) -> MentionResolution:
+    """Replace ``@Name`` mentions with ADO mention HTML.
+
+    Each mention takes the longest run of up to five words that names exactly
+    one identity, so ``@Jane Doe (CTR), please`` consumes ``Jane Doe (CTR)``.
+    A name shared by several people is reported as ambiguous and left as text.
+    """
+    mentions = _find_mentions(text)
+    res = MentionResolution(text=text)
+    if not mentions:
+        return res
+
+    queries = list(dict.fromkeys(q for m in mentions for q, _ in m.spans))
+    found = await asyncio.gather(*(
+        _lookup_identities(q, org=org, auth_method=auth_method, pat=pat) for q in queries
+    ))
+    lookup = dict(zip(queries, found))
+
+    replacements: list[tuple[int, int, str]] = []
+    for mention in mentions:
+        for query, end in mention.spans:
+            matches = list({
+                i["localId"]: i for i in lookup[query] if _identity_matches(query, i)
+            }.values())
+            if len(matches) > 1:
+                exact = [i for i in matches if _identity_matches(query, i, exact=True)]
+                if len(exact) != 1:
+                    res.ambiguous.setdefault(query, sorted(i["displayName"] for i in matches))
+                    break
+                matches = exact
+            if matches:
+                replacements.append((mention.start, end, _mention_html(matches[0])))
+                if matches[0]["displayName"] not in res.mentioned:
+                    res.mentioned.append(matches[0]["displayName"])
+                break
+        else:
+            name = mention.spans[-1][0]
+            if name not in res.unresolved:
+                res.unresolved.append(name)
+
+    for start, end, anchor in reversed(replacements):
+        text = text[:start] + anchor + text[end:]
+    res.text = text
+    return res
+
+
+def _report_mentions(res: MentionResolution) -> None:
+    if res.mentioned:
+        click.echo(f"Mentioned: {', '.join(res.mentioned)}", err=True)
+    for name in res.unresolved:
+        click.echo(f"Warning: Could not resolve @{name} — left as plain text", err=True)
+    for name, options in res.ambiguous.items():
+        click.echo(
+            f"Warning: @{name} is ambiguous ({'; '.join(options)}) — left as plain text",
+            err=True,
+        )
 
 
 async def resolve_mentions(
     text: str, *, org: str, auth_method: str, pat: str,
 ) -> str:
     """Detect @name patterns in text and replace with ADO mention HTML."""
-    candidates = _find_mention_candidates(text)
-    if not candidates:
-        return text
-
-    tasks = {
-        name: _resolve_identity(name, org=org, auth_method=auth_method, pat=pat)
-        for name in candidates
-    }
-    results = await asyncio.gather(*tasks.values())
-    resolved = dict(zip(tasks.keys(), results))
-
-    for name in sorted(resolved, key=len, reverse=True):
-        identity = resolved[name]
-        if identity is None:
-            click.echo(f"Warning: Could not resolve @{name} — left as plain text", err=True)
-            continue
-        mention_html = (
-            f'<a href="mailto:{identity["mail"]}" '
-            f'data-vss-mention="version:2.0,{identity["localId"]}">'
-            f'@{identity["displayName"]}</a>'
-        )
-        pattern = re.compile(r'(?<![="\w@.])@' + re.escape(name), re.IGNORECASE)
-        text = pattern.sub(mention_html, text)
-
-    return text
+    res = await resolve_mention_html(text, org=org, auth_method=auth_method, pat=pat)
+    _report_mentions(res)
+    return res.text
 
 
 async def add_comment(
@@ -348,9 +470,13 @@ async def add_comment(
     work_item_id: int,
     text: str,
     resolve_mentions_flag: bool = True,
+    strict_mentions: bool = False,
     dry_run: bool = False,
 ) -> dict:
     """Post a comment on an ADO work item and refresh local JSONL store.
+
+    With ``strict_mentions``, an unresolved or ambiguous @mention aborts
+    before anything is posted.
 
     Returns the normalized JSONL record for the work item.
     """
@@ -360,7 +486,14 @@ async def add_comment(
         return {}
 
     if resolve_mentions_flag:
-        text = await resolve_mentions(text, org=org, auth_method=auth_method, pat=pat)
+        res = await resolve_mention_html(text, org=org, auth_method=auth_method, pat=pat)
+        _report_mentions(res)
+        if strict_mentions and (res.unresolved or res.ambiguous):
+            raise click.ClickException(
+                "Comment not posted: fix the @mentions above (use the full display "
+                "name or email), write &#64; for a literal @, or pass --no-mentions."
+            )
+        text = res.text
 
     body = json.dumps({"text": text})
 

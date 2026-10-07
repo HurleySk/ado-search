@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.15.0] - 2026-10-07
+
+### Added
+
+- **`add-comment --strict-mentions`** -- aborts before posting when an `@mention` is unresolved or ambiguous, so a comment never goes out with a tag that silently failed.
+- **Mention report** -- resolved, unresolved, and ambiguous mentions are printed to stderr.
+
+### Fixed
+
+- **Multi-word names tagged only the first word** -- `@Earle Oxner (CTR)` resolved `Earle` alone, so the posted comment read `@Earle Oxner (CTR) Oxner (CTR)`. A mention now takes the longest run of up to five words that names one identity.
+- **Mentions tagged the wrong person** -- the first Identity Picker hit was used even on a bare prefix (`@John` tagged `Johnathan`, `@Michael` picked one of three). A name must now match whole words of the display name, or the mail address or its local part, and a name shared by several people is reported as ambiguous instead of guessed.
+- **Existing mention anchors were wrapped again** -- text inside `<a>`, `<code>`, `<pre>`, and tag attributes is no longer scanned.
+- **Mention anchors use `href="#"`** like the ADO web editor, so the comment's `mentions` record carries the identity id instead of the mail address.
+- **Leading `@mention` error** -- the "File not found" error for text that starts with `@` now says to use `@@`.
+
 ## [1.14.0] - 2026-09-28
 
 ### Added

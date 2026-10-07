@@ -142,16 +142,22 @@ ado-search add-comment 12345 @review-notes.html
 ado-search add-comment 12345 "<p>Looks good!</p>"
 
 # @mentions are auto-resolved to ADO identity links
-ado-search add-comment 12345 "Great work @John.Smith, please review"
+ado-search add-comment 12345 "Great work @John Smith (CTR), please review"
+
+# Text that starts with an @mention needs @@ so it is not read as a file path
+ado-search add-comment 12345 "@@Jane Doe, can you retest?"
+
+# Refuse to post if any mention is unknown or ambiguous
+ado-search add-comment 12345 "@@Jane Doe, can you retest?" --strict-mentions
 
 # Skip mention resolution (post raw text as-is)
-ado-search add-comment 12345 "@not-a-user just a note" --no-mentions
+ado-search add-comment 12345 "@@not-a-user just a note" --no-mentions
 
 # Escape a literal @ with @@
 ado-search update 12345 --description "@@mention is not a file reference"
 ```
 
-`@DisplayName` patterns in comment text are resolved via the ADO Identity Picker API and replaced with mention HTML so the mentioned user receives a notification.
+`@Display Name` and `@email` patterns in comment text are resolved via the ADO Identity Picker API and replaced with mention HTML so the mentioned user receives a notification. A mention takes the longest run of up to five words that names exactly one person by whole words, so `@Jane Doe (CTR), please` tags Jane Doe and keeps `, please`, and `@Jan` never tags `Janet`. A first name shared by several people is reported as ambiguous and left as text. Existing mention anchors, `<code>`, and `<pre>` are left alone; write `&#64;` for a literal `@` in the comment. Resolved, unresolved, and ambiguous mentions are reported on stderr.
 
 After create/update/add-comment/add-link, the item is automatically re-fetched and merged into the local JSONL store so it appears in search immediately.
 

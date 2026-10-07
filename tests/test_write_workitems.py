@@ -17,7 +17,10 @@ from ado_search.write_workitems import (
     resolve_value,
     create_work_item,
     update_work_item,
-    _find_mention_candidates,
+    _find_mentions,
+    _identity_matches,
+    _mention_spans,
+    resolve_mention_html,
     FIELD_MAP,
     LINK_TYPE_MAP,
 )
@@ -549,40 +552,91 @@ def test_remove_link_resolves_friendly_name(tmp_path):
 # ── mention detection tests ──────────────────────────────────────
 
 
-def test_find_mention_candidates_single():
-    assert _find_mention_candidates("Hello @john") == ["john"]
+def _first_tokens(text):
+    return [m.spans[-1][0] for m in _find_mentions(text)]
 
 
-def test_find_mention_candidates_multiple():
-    assert _find_mention_candidates("@alice and @bob") == ["alice", "bob"]
+def test_find_mentions_single():
+    assert _first_tokens("Hello @john") == ["john"]
 
 
-def test_find_mention_candidates_dotted_name():
-    assert _find_mention_candidates("cc @John.Smith") == ["John.Smith"]
+def test_find_mentions_multiple():
+    assert _first_tokens("@alice and @bob") == ["alice", "bob"]
 
 
-def test_find_mention_candidates_hyphenated_name():
-    assert _find_mention_candidates("ask @mary-jane") == ["mary-jane"]
+def test_find_mentions_dotted_name():
+    assert _first_tokens("cc @John.Smith") == ["John.Smith"]
 
 
-def test_find_mention_candidates_skips_email():
-    assert _find_mention_candidates("user@domain.com") == []
+def test_find_mentions_hyphenated_name():
+    assert _first_tokens("ask @mary-jane") == ["mary-jane"]
 
 
-def test_find_mention_candidates_skips_html_attr():
-    assert _find_mention_candidates('href="mailto:x@y.com"') == []
+def test_find_mentions_skips_email():
+    assert _find_mentions("user@domain.com") == []
 
 
-def test_find_mention_candidates_no_mentions():
-    assert _find_mention_candidates("plain text") == []
+def test_find_mentions_skips_html_attr():
+    assert _find_mentions('href="mailto:x@y.com"') == []
 
 
-def test_find_mention_candidates_deduplicates():
-    assert _find_mention_candidates("@alice and @alice again") == ["alice"]
+def test_find_mentions_no_mentions():
+    assert _find_mentions("plain text") == []
 
 
-def test_find_mention_candidates_skips_double_at():
-    assert _find_mention_candidates("@@escaped") == []
+def test_find_mentions_skips_double_at():
+    assert _find_mentions("@@escaped") == []
+
+
+def test_find_mentions_skips_existing_anchor():
+    text = '<a href="#" data-vss-mention="version:2.0,abc">@Jane Doe</a> hi'
+    assert _find_mentions(text) == []
+
+
+def test_find_mentions_skips_code_blocks():
+    assert _find_mentions("<code>DECLARE @id INT</code> and <pre>@x</pre>") == []
+
+
+def test_find_mentions_inside_html_text():
+    assert _first_tokens("<p>@Jane Doe, see above</p>") == ["Jane"]
+
+
+def test_mention_spans_multi_word_longest_first():
+    text = "@Jane Q. Doe (CTR), please"
+    assert [q for q, _ in _mention_spans(text, 1)] == [
+        "Jane Q. Doe (CTR)", "Jane Q. Doe", "Jane Q.", "Jane Q", "Jane",
+    ]
+
+
+def test_mention_spans_nbsp_separator():
+    assert [q for q, _ in _mention_spans("@Jane&nbsp;Doe", 1)] == ["Jane&nbsp;Doe", "Jane"]
+
+
+def test_mention_spans_email():
+    assert _mention_spans("@jane.doe@co.com, hi", 1) == [("jane.doe@co.com", 16)]
+
+
+def test_mention_spans_caps_at_five_words():
+    spans = _mention_spans("@a b c d e f g", 1)
+    assert spans[0][0] == "a b c d e"
+
+
+def test_identity_matches_whole_words_only():
+    jane = {"displayName": "Jane Doe (CTR)", "mail": "Jane.Doe@co.com"}
+    assert _identity_matches("Jane", jane)
+    assert _identity_matches("jane doe", jane)
+    assert _identity_matches("Jane Doe (CTR)", jane)
+    assert _identity_matches("Jane.Doe", jane)
+    assert _identity_matches("jane.doe@co.com", jane)
+    assert not _identity_matches("Jan", jane)
+    assert not _identity_matches("Doe", jane)
+    assert not _identity_matches("Jane please", jane)
+
+
+def test_identity_matches_exact_ignores_parenthetical():
+    jane = {"displayName": "Jane Doe (CTR)", "mail": ""}
+    assert _identity_matches("Jane Doe", jane, exact=True)
+    assert not _identity_matches("Jane", jane, exact=True)
 
 
 # ── resolve_mentions tests ───────────────────────────────────────
@@ -598,15 +652,38 @@ def _make_identity_result(local_id, display_name, mail):
     })
 
 
+def _directory(*people):
+    """Mimic the Identity Picker: prefix match on display name or mail."""
+    calls = []
+
+    async def side_effect(*args, **kwargs):
+        query = json.loads(kwargs["body"])["query"].casefold()
+        calls.append(query)
+        hits = [
+            {"localId": lid, "displayName": name, "mail": mail}
+            for lid, name, mail in people
+            if name.casefold().startswith(query) or mail.casefold().startswith(query)
+        ]
+        return _make_command_result({"results": [{"identities": hits}]})
+
+    side_effect.calls = calls
+    return side_effect
+
+
+def _resolve(text, directory):
+    with patch("ado_search.write_workitems.run_operation", new_callable=AsyncMock, side_effect=directory):
+        return asyncio.run(resolve_mention_html(
+            text, org="https://dev.azure.com/co", auth_method="pat", pat="fake",
+        ))
+
+
 def test_resolve_mentions_replaces_single():
     mock_result = _make_identity_result("abc-123", "John Doe", "john@co.com")
     with patch("ado_search.write_workitems.run_operation", new_callable=AsyncMock, return_value=mock_result):
         out = asyncio.run(resolve_mentions(
             "Hello @john!", org="https://dev.azure.com/co", auth_method="pat", pat="fake",
         ))
-    assert 'data-vss-mention="version:2.0,abc-123"' in out
-    assert "@John Doe</a>" in out
-    assert "mailto:john@co.com" in out
+    assert out == 'Hello <a href="#" data-vss-mention="version:2.0,abc-123">@John Doe</a>!'
 
 
 def test_resolve_mentions_no_match_leaves_text():
@@ -624,6 +701,80 @@ def test_resolve_mentions_no_candidates():
         "plain text", org="https://dev.azure.com/co", auth_method="pat", pat="fake",
     ))
     assert out == "plain text"
+
+
+def test_resolve_full_name_consumes_whole_name():
+    d = _directory(("id-j", "Jane Doe (CTR)", "Jane.Doe@co.com"))
+    res = _resolve("@Jane Doe (CTR), can you retest?", d)
+    assert res.text == '<a href="#" data-vss-mention="version:2.0,id-j">@Jane Doe (CTR)</a>, can you retest?'
+    assert res.mentioned == ["Jane Doe (CTR)"]
+
+
+def test_resolve_partial_name_keeps_following_words():
+    d = _directory(("id-j", "Jane Doe (CTR)", "Jane.Doe@co.com"))
+    res = _resolve("Hi @Jane Doe please check", d)
+    assert res.text == 'Hi <a href="#" data-vss-mention="version:2.0,id-j">@Jane Doe (CTR)</a> please check'
+
+
+def test_resolve_does_not_match_name_prefix():
+    d = _directory(("id-x", "Johnathan Roe", "Johnathan.Roe@co.com"))
+    res = _resolve("@John, fyi", d)
+    assert "data-vss-mention" not in res.text
+    assert res.unresolved == ["John"]
+
+
+def test_resolve_first_name_shared_is_ambiguous():
+    d = _directory(
+        ("id-1", "Michael Ash", "Michael.Ash@co.com"),
+        ("id-2", "Michael Ji", "Michael.Ji@co.com"),
+    )
+    res = _resolve("@Michael see this", d)
+    assert "data-vss-mention" not in res.text
+    assert res.ambiguous == {"Michael": ["Michael Ash", "Michael Ji"]}
+
+
+def test_resolve_full_name_disambiguates():
+    d = _directory(
+        ("id-1", "Michael Ash", "Michael.Ash@co.com"),
+        ("id-2", "Michael Ji", "Michael.Ji@co.com"),
+    )
+    res = _resolve("@Michael Ji see this", d)
+    assert res.text == '<a href="#" data-vss-mention="version:2.0,id-2">@Michael Ji</a> see this'
+
+
+def test_resolve_exact_name_beats_longer_names():
+    d = _directory(
+        ("id-1", "Ann Lee", "Ann.Lee@co.com"),
+        ("id-2", "Ann Lee Smith", "Ann.Smith@co.com"),
+    )
+    res = _resolve("@Ann Lee, hi", d)
+    assert 'version:2.0,id-1"' in res.text
+
+
+def test_resolve_email_and_trailing_period():
+    d = _directory(("id-j", "Jane Doe", "jane@co.com"))
+    res = _resolve("cc @jane@co.com and thanks @Jane.", d)
+    assert res.text.count('version:2.0,id-j"') == 2
+    assert res.text.endswith("</a>.")
+
+
+def test_resolve_leaves_existing_anchor_alone():
+    d = _directory(("id-j", "Jane Doe", "jane@co.com"))
+    text = '<a href="#" data-vss-mention="version:2.0,id-j">@Jane Doe</a>&nbsp;hi'
+    assert _resolve(text, d).text == text
+    assert d.calls == []
+
+
+def test_resolve_multiple_mentions_and_html_escape():
+    d = _directory(
+        ("id-a", "Al <Ops>", "al@co.com"),
+        ("id-b", "Bea Kim (CTR)", "bea@co.com"),
+    )
+    res = _resolve("<p>@Al&nbsp;@Bea Kim (CTR) done</p>", d)
+    assert res.text == (
+        '<p><a href="#" data-vss-mention="version:2.0,id-a">@Al &lt;Ops&gt;</a>&nbsp;'
+        '<a href="#" data-vss-mention="version:2.0,id-b">@Bea Kim (CTR)</a> done</p>'
+    )
 
 
 def test_add_comment_with_mentions_pat(tmp_path):
@@ -676,3 +827,38 @@ def test_add_comment_dry_run_skips_mentions(tmp_path):
             work_item_id=42, text="Hello @alice", dry_run=True,
         ))
     mock_op.assert_not_called()
+
+
+def test_add_comment_strict_mentions_aborts_before_posting(tmp_path):
+    d = _directory(("id-j", "Jane Doe", "jane@co.com"))
+    with patch("ado_search.write_workitems.run_operation", new_callable=AsyncMock, side_effect=d) as mock_op:
+        with pytest.raises(click.ClickException):
+            asyncio.run(add_comment(
+                org="https://dev.azure.com/co", project="P",
+                auth_method="pat", pat="fake", data_dir=tmp_path,
+                work_item_id=42, text="@Jane and @Nobody", strict_mentions=True,
+            ))
+    assert all("add-comment" not in c.args for c in mock_op.call_args_list)
+
+
+def test_add_comment_posts_resolved_mention_html(tmp_path):
+    d = _directory(("id-j", "Jane Doe (CTR)", "jane@co.com"))
+    record = _make_record(item_id=42)
+    posted = {}
+
+    async def side_effect(*args, **kwargs):
+        if "identity-lookup" in args:
+            return await d(*args, **kwargs)
+        posted.update(json.loads(kwargs["body"]))
+        return _make_command_result({"id": 1})
+
+    with patch("ado_search.write_workitems.run_operation", new_callable=AsyncMock, side_effect=side_effect), \
+         patch("ado_search.write_workitems._refetch_and_merge", new_callable=AsyncMock, return_value=record):
+        asyncio.run(add_comment(
+            org="https://dev.azure.com/co", project="P",
+            auth_method="pat", pat="fake", data_dir=tmp_path,
+            work_item_id=42, text="@Jane Doe (CTR), please retest", strict_mentions=True,
+        ))
+    assert posted["text"] == (
+        '<a href="#" data-vss-mention="version:2.0,id-j">@Jane Doe (CTR)</a>, please retest'
+    )

@@ -366,3 +366,53 @@ def test_sync_wiki_failure_keeps_project_watermarks(tmp_path):
     assert "wiki" in result.output.lower()
     saved = load_config(data_dir / "config.toml")
     assert set(saved["sync"]["last_sync_by_project"]) == {"Alpha", "Beta"}
+
+
+def test_list_comments_shows_comment_ids(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    _write_config(data_dir, project="Alpha")
+    comments = {"comments": [
+        {"id": 13950321, "text": "<p>First</p>", "createdDate": "2026-10-07T12:00:00Z",
+         "createdBy": {"displayName": "Jane Doe"}},
+    ]}
+    with patch("ado_search.runner.fetch_and_parse", AsyncMock(return_value=comments)):
+        result = CliRunner().invoke(main, ["list-comments", "42", "--data-dir", str(data_dir)])
+    assert result.exit_code == 0, result.output
+    assert "[2026-10-07] Jane Doe (id 13950321):" in result.output
+    assert "First" in result.output
+
+
+def _invoke_edit_comment(data_dir, *args):
+    edit = AsyncMock(return_value={"id": 42})
+    with patch("ado_search.write_workitems.edit_comment", edit):
+        result = CliRunner().invoke(main, ["edit-comment", *args, "--data-dir", str(data_dir)])
+    return result, edit
+
+
+def test_edit_comment_command(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    _write_config(data_dir, project="Alpha")
+    result, edit = _invoke_edit_comment(data_dir, "42", "678", "@@Jane Doe, retest", "--strict-mentions")
+    assert result.exit_code == 0, result.output
+    assert "Edited comment 678 on work item #42" in result.output
+    kwargs = edit.call_args.kwargs
+    assert (kwargs["work_item_id"], kwargs["comment_id"]) == (42, 678)
+    assert kwargs["text"] == "@Jane Doe, retest"
+    assert kwargs["project"] == "Alpha"
+    assert kwargs["resolve_mentions_flag"] is True
+    assert kwargs["strict_mentions"] is True
+    assert kwargs["dry_run"] is False
+
+
+def test_edit_comment_command_reads_file_and_flags(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    _write_config(data_dir, project="Alpha")
+    body = tmp_path / "c.html"
+    body.write_text("<p>From file</p>", encoding="utf-8")
+    result, edit = _invoke_edit_comment(data_dir, "42", "678", f"@{body}", "--no-mentions", "--dry-run")
+    assert result.exit_code == 0, result.output
+    kwargs = edit.call_args.kwargs
+    assert kwargs["text"] == "<p>From file</p>"
+    assert kwargs["resolve_mentions_flag"] is False
+    assert kwargs["dry_run"] is True
+    assert "Edited comment" not in result.output

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0] - 2026-10-12
+
+### Added
+
+- **`edit-comment WORK_ITEM_ID COMMENT_ID TEXT`** -- replaces the text of an existing comment (`PATCH .../comments/{id}`, all three auth methods). Takes the same text forms and options as `add-comment` (`@file`, `@@`, `--no-mentions`, `--strict-mentions`, `--dry-run`) and refreshes the local store afterwards.
+- **`list-comments` shows each comment's id**, so a comment can be found for `edit-comment`.
+
 ## [1.15.0] - 2026-10-07
 
 ### Added

@@ -20,6 +20,7 @@ OP_ATTACHMENT = "attachment"
 OP_CREATE = "create"
 OP_UPDATE = "update"
 OP_ADD_COMMENT = "add-comment"
+OP_EDIT_COMMENT = "edit-comment"
 OP_ADD_LINK = "add-link"
 OP_UPLOAD_ATTACHMENT = "upload-attachment"
 OP_IDENTITY_LOOKUP = "identity-lookup"
@@ -60,6 +61,7 @@ def _resolve_url(op: OperationDef, *, org: str, project: str, **kwargs) -> str:
     url_project = quote(project or "", safe="")
     url_wiki = quote(kwargs.get("wiki") or "", safe="")
     work_item_id = kwargs.get("work_item_id", "")
+    comment_id = kwargs.get("comment_id", "")
     work_item_type = kwargs.get("work_item_type", "")
     path = kwargs.get("path", "")
 
@@ -68,6 +70,7 @@ def _resolve_url(op: OperationDef, *, org: str, project: str, **kwargs) -> str:
         .replace("{url_project}", url_project)
         .replace("{url_wiki}", url_wiki)
         .replace("{work_item_id}", str(work_item_id))
+        .replace("{comment_id}", str(comment_id))
         .replace("{work_item_type}", quote(str(work_item_type), safe=""))
     )
 
@@ -175,6 +178,12 @@ OPERATIONS: dict[str, OperationDef] = {
         query_params=["api-version=7.1-preview.4"],
         has_body=True,
     ),
+    OP_EDIT_COMMENT: OperationDef(
+        method="PATCH",
+        path="{url_project}/_apis/wit/workItems/{work_item_id}/comments/{comment_id}",
+        query_params=["api-version=7.1-preview.4"],
+        has_body=True,
+    ),
     OP_ADD_LINK: OperationDef(
         method="PATCH",
         path="{url_project}/_apis/wit/workitems/{work_item_id}",
@@ -215,13 +224,15 @@ def build_az_cli_command(
     fields: list[str] | None = None,
     body: str | bytes | None = None,
     content_type: str | None = None,
+    comment_id: int | None = None,
 ) -> list[str]:
     op = OPERATIONS.get(operation)
     if op is None:
         raise ValueError(f"Unknown operation: {operation}")
 
     kwargs = dict(wiql=wiql, work_item_id=work_item_id, wiki=wiki, path=path, url=url,
-                  work_item_type=work_item_type, title=title, fields=fields)
+                  work_item_type=work_item_type, title=title, fields=fields,
+                  comment_id=comment_id)
 
     # Operations that use specific az CLI subcommands
     if not op.use_az_rest and op.az_cli_args is not None:
@@ -270,6 +281,7 @@ def build_powershell_command(
     work_item_type: str | None = None,
     body: str | bytes | None = None,
     content_type: str | None = None,
+    comment_id: int | None = None,
     **_extra,
 ) -> list[str]:
     op = OPERATIONS.get(operation)
@@ -282,7 +294,7 @@ def build_powershell_command(
 
     api_url = _resolve_url(op, org=org, project=project, wiki=wiki, path=path,
                            work_item_id=work_item_id, url=url,
-                           work_item_type=work_item_type)
+                           work_item_type=work_item_type, comment_id=comment_id)
 
     # Escape for PowerShell
     if op.raw_url:
@@ -359,6 +371,7 @@ def pat_request(
     work_item_type: str | None = None,
     body: str | bytes | None = None,
     content_type: str | None = None,
+    comment_id: int | None = None,
     **_extra,
 ) -> dict | list:
     """Make a direct HTTP request using PAT Basic auth. Returns parsed JSON."""
@@ -373,7 +386,7 @@ def pat_request(
 
     api_url = _resolve_url(op, org=org, project=project, wiki=wiki, path=path,
                            work_item_id=work_item_id, url=url,
-                           work_item_type=work_item_type)
+                           work_item_type=work_item_type, comment_id=comment_id)
 
     creds = base64.b64encode(f":{pat}".encode()).decode()
     ct = content_type or "application/json"

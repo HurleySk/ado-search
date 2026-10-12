@@ -9,6 +9,7 @@ import pytest
 from ado_search.write_workitems import (
     add_comment,
     add_link,
+    edit_comment,
     build_az_fields,
     build_json_patch,
     remove_link,
@@ -862,3 +863,125 @@ def test_add_comment_posts_resolved_mention_html(tmp_path):
     assert posted["text"] == (
         '<a href="#" data-vss-mention="version:2.0,id-j">@Jane Doe (CTR)</a>, please retest'
     )
+
+
+# ── edit_comment tests ──────────────────────────────────────────────
+
+
+def _edit(tmp_path, side_effect, **kwargs):
+    with patch("ado_search.write_workitems.run_operation", new_callable=AsyncMock, side_effect=side_effect) as mock_op, \
+         patch("ado_search.write_workitems._refetch_and_merge", new_callable=AsyncMock,
+               return_value=_make_record(item_id=42)) as mock_refetch:
+        result = asyncio.run(edit_comment(
+            org="https://dev.azure.com/co", project="P",
+            auth_method="pat", pat="fake", data_dir=tmp_path,
+            work_item_id=42, comment_id=678, **kwargs,
+        ))
+    return result, mock_op, mock_refetch
+
+
+def test_edit_comment_dry_run(tmp_path):
+    result, mock_op, mock_refetch = _edit(tmp_path, None, text="Hello @alice", dry_run=True)
+    mock_op.assert_not_called()
+    mock_refetch.assert_not_called()
+    assert result == {}
+
+
+def test_edit_comment_pat(tmp_path):
+    async def side_effect(*args, **kwargs):
+        return _make_command_result({"id": 678})
+
+    result, mock_op, mock_refetch = _edit(tmp_path, side_effect, text="<p>Edited</p>")
+    mock_op.assert_called_once()
+    assert mock_op.call_args.args == ("pat", "edit-comment")
+    kwargs = mock_op.call_args.kwargs
+    assert kwargs["work_item_id"] == 42
+    assert kwargs["comment_id"] == 678
+    assert kwargs["content_type"] == "application/json"
+    assert json.loads(kwargs["body"]) == {"text": "<p>Edited</p>"}
+    assert mock_refetch.call_args.args == (42,)
+    assert result["id"] == 42
+
+
+def test_edit_comment_posts_resolved_mention_html(tmp_path):
+    d = _directory(("id-j", "Jane Doe (CTR)", "jane@co.com"))
+    posted = {}
+
+    async def side_effect(*args, **kwargs):
+        if "identity-lookup" in args:
+            return await d(*args, **kwargs)
+        posted.update(json.loads(kwargs["body"]))
+        return _make_command_result({"id": 678})
+
+    _edit(tmp_path, side_effect, text="@Jane Doe (CTR), please retest", strict_mentions=True)
+    assert posted["text"] == (
+        '<a href="#" data-vss-mention="version:2.0,id-j">@Jane Doe (CTR)</a>, please retest'
+    )
+
+
+def test_edit_comment_no_mentions_flag(tmp_path):
+    async def side_effect(*args, **kwargs):
+        return _make_command_result({"id": 678})
+
+    _, mock_op, _ = _edit(tmp_path, side_effect, text="Hello @alice", resolve_mentions_flag=False)
+    mock_op.assert_called_once()
+    assert json.loads(mock_op.call_args.kwargs["body"])["text"] == "Hello @alice"
+
+
+def _recording_directory(*people):
+    d = _directory(*people)
+    ops = []
+
+    async def side_effect(*args, **kwargs):
+        ops.append(args[1])
+        if args[1] == "identity-lookup":
+            return await d(*args, **kwargs)
+        return _make_command_result({"id": 678})
+
+    return side_effect, ops
+
+
+def test_edit_comment_strict_mentions_aborts_before_editing(tmp_path):
+    side_effect, ops = _recording_directory(("id-j", "Jane Doe", "jane@co.com"))
+    with pytest.raises(click.ClickException, match="Comment not edited"):
+        _edit(tmp_path, side_effect, text="@Jane and @Nobody", strict_mentions=True)
+    assert ops and "edit-comment" not in ops
+
+
+def test_edit_comment_unresolved_mention_without_strict_still_edits(tmp_path):
+    side_effect, ops = _recording_directory()
+    _edit(tmp_path, side_effect, text="Hi @Nobody")
+    assert ops[-1] == "edit-comment"
+
+
+def test_edit_comment_error_exits_without_refetch(tmp_path):
+    async def side_effect(*args, **kwargs):
+        return _make_command_result({}, returncode=1, stderr="HTTP 403")
+
+    with patch("ado_search.write_workitems._refetch_and_merge", new_callable=AsyncMock) as mock_refetch, \
+         patch("ado_search.write_workitems.run_operation", new_callable=AsyncMock, side_effect=side_effect):
+        with pytest.raises(SystemExit):
+            asyncio.run(edit_comment(
+                org="https://dev.azure.com/co", project="P",
+                auth_method="pat", pat="fake", data_dir=tmp_path,
+                work_item_id=42, comment_id=678, text="x", resolve_mentions_flag=False,
+            ))
+    mock_refetch.assert_not_called()
+
+
+def test_edit_comment_refreshes_jsonl(tmp_path):
+    wi_jsonl = tmp_path / "work-items.jsonl"
+    wi_jsonl.write_text(json.dumps({"id": 42, "title": "Old"}) + "\n")
+
+    async def side_effect(*args, **kwargs):
+        return _make_command_result({"id": 678})
+
+    with patch("ado_search.write_workitems.run_operation", new_callable=AsyncMock, side_effect=side_effect), \
+         patch("ado_search.sync_workitems.fetch_item", new_callable=AsyncMock,
+               return_value=_make_record(item_id=42, title="Fresh")):
+        asyncio.run(edit_comment(
+            org="https://dev.azure.com/co", project="P",
+            auth_method="pat", pat="fake", data_dir=tmp_path,
+            work_item_id=42, comment_id=678, text="x", resolve_mentions_flag=False,
+        ))
+    assert json.loads(wi_jsonl.read_text().splitlines()[0])["title"] == "Fresh"

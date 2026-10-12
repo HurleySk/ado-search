@@ -86,11 +86,12 @@ ado-search sync --include-attachments
 | `ado-search create` | Create a new work item |
 | `ado-search update <id>` | Update an existing work item |
 | `ado-search add-comment <id> <text>` | Add a comment to a work item |
+| `ado-search edit-comment <id> <comment_id> <text>` | Replace the text of a comment |
 | `ado-search add-link <source> <target>` | Add a link between two work items |
 | `ado-search remove-link <source> <target>` | Remove a link between two work items |
 | `ado-search upload-attachment <id> <file>` | Upload a local file as an attachment to a work item |
 | `ado-search list-links <id>` | List links on a work item (live) |
-| `ado-search list-comments <id>` | List comments on a work item (live) |
+| `ado-search list-comments <id>` | List comments on a work item, with their ids (live) |
 | `ado-search grep "pattern"` | Regex search across work item fields |
 | `ado-search children <parent_id>` | List children (or full tree) of a work item |
 
@@ -155,11 +156,16 @@ ado-search add-comment 12345 "@@not-a-user just a note" --no-mentions
 
 # Escape a literal @ with @@
 ado-search update 12345 --description "@@mention is not a file reference"
+
+# Replace the text of a comment (ids come from list-comments)
+ado-search edit-comment 12345 5335866 "@@Jane Doe, retest with build 2" --strict-mentions
 ```
+
+`edit-comment` takes the same text forms and options as `add-comment` and replaces the whole comment.
 
 `@Display Name` and `@email` patterns in comment text are resolved via the ADO Identity Picker API and replaced with mention HTML so the mentioned user receives a notification. A mention takes the longest run of up to five words that names exactly one person by whole words, so `@Jane Doe (CTR), please` tags Jane Doe and keeps `, please`, and `@Jan` never tags `Janet`. A first name shared by several people is reported as ambiguous and left as text. Existing mention anchors, `<code>`, and `<pre>` are left alone; write `&#64;` for a literal `@` in the comment. Resolved, unresolved, and ambiguous mentions are reported on stderr.
 
-After create/update/add-comment/add-link, the item is automatically re-fetched and merged into the local JSONL store so it appears in search immediately.
+After create/update/add-comment/edit-comment/add-link, the item is automatically re-fetched and merged into the local JSONL store so it appears in search immediately.
 
 ## Links
 
@@ -185,7 +191,7 @@ ado-search remove-link 12345 67890 --type parent
 # List all links on a work item (live from ADO)
 ado-search list-links 12345
 
-# List all comments on a work item (live from ADO)
+# List all comments on a work item with their ids (live from ADO)
 ado-search list-comments 12345
 ```
 

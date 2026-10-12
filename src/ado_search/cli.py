@@ -689,6 +689,44 @@ def add_comment_cmd(work_item_id, text, data_dir, dry_run, no_mentions, strict_m
             click.echo(f"Added comment to work item #{record.get('id', work_item_id)}")
 
 
+@main.command("edit-comment")
+@click.argument("work_item_id", type=int)
+@click.argument("comment_id", type=int)
+@click.argument("text")
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Data directory (default: ./.ado-search)")
+@click.option("--dry-run", is_flag=True, help="Preview without editing")
+@click.option("--no-mentions", is_flag=True,
+              help="Skip @mention resolution (save raw text as-is)")
+@click.option("--strict-mentions", is_flag=True,
+              help="Abort without editing if any @mention is unresolved or ambiguous")
+def edit_comment_cmd(work_item_id, comment_id, text, data_dir, dry_run, no_mentions, strict_mentions):
+    """Replace the text of a comment on an Azure DevOps work item.
+
+    COMMENT_ID is the id shown by list-comments. TEXT takes the same forms as
+    add-comment (inline HTML, @file.html, @@ for a leading mention) and
+    replaces the whole comment.
+    """
+    from ado_search.write_workitems import edit_comment, resolve_value
+
+    text = resolve_value(text)
+
+    with _conn_db(data_dir) as (conn, db):
+        record = asyncio.run(edit_comment(
+            org=conn.org, project=conn.project,
+            auth_method=conn.auth_method, pat=conn.pat,
+            data_dir=conn.data_path,
+            work_item_id=work_item_id, comment_id=comment_id, text=text,
+            resolve_mentions_flag=not no_mentions,
+            strict_mentions=strict_mentions,
+            dry_run=dry_run,
+        ))
+
+        if not dry_run and record:
+            _ensure_index(conn.data_path, db, force=True)
+            click.echo(f"Edited comment {comment_id} on work item #{record.get('id', work_item_id)}")
+
+
 @main.command("add-link")
 @click.argument("source_id", type=int)
 @click.argument("target_id", type=int)
@@ -806,7 +844,7 @@ def list_links_cmd(work_item_id, data_dir):
 @click.option("--data-dir", type=click.Path(), default=None,
               help="Data directory (default: ./.ado-search)")
 def list_comments_cmd(work_item_id, data_dir):
-    """List comments on an Azure DevOps work item (live from ADO)."""
+    """List comments on an Azure DevOps work item, with their ids (live from ADO)."""
     conn = _load_conn(data_dir)
 
     from ado_search.auth import OP_COMMENTS
@@ -834,7 +872,7 @@ def list_comments_cmd(work_item_id, data_dir):
         author = c.get("createdBy", {}).get("displayName", "Unknown")
         date = c.get("createdDate", "")[:10]
         text = strip_html(c.get("text", ""))
-        click.echo(f"\n  [{date}] {author}:")
+        click.echo(f"\n  [{date}] {author} (id {c.get('id', '?')}):")
         for line in text.split("\n"):
             click.echo(f"    {line}")
 

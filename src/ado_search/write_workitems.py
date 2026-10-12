@@ -10,7 +10,9 @@ from typing import Any
 
 import click
 
-from ado_search.auth import OP_ADD_COMMENT, OP_ADD_LINK, OP_CREATE, OP_IDENTITY_LOOKUP, OP_SHOW, OP_UPDATE
+from ado_search.auth import (
+    OP_ADD_COMMENT, OP_ADD_LINK, OP_CREATE, OP_EDIT_COMMENT, OP_IDENTITY_LOOKUP, OP_SHOW, OP_UPDATE,
+)
 from ado_search.runner import run_operation
 from ado_search.sync_common import finalize_jsonl
 
@@ -481,19 +483,14 @@ async def add_comment(
     Returns the normalized JSONL record for the work item.
     """
     if dry_run:
-        preview = text[:200] + ("…" if len(text) > 200 else "")
-        click.echo(f"Would add comment to work item #{work_item_id}:\n{preview}")
+        click.echo(f"Would add comment to work item #{work_item_id}:\n{_preview(text)}")
         return {}
 
     if resolve_mentions_flag:
-        res = await resolve_mention_html(text, org=org, auth_method=auth_method, pat=pat)
-        _report_mentions(res)
-        if strict_mentions and (res.unresolved or res.ambiguous):
-            raise click.ClickException(
-                "Comment not posted: fix the @mentions above (use the full display "
-                "name or email), write &#64; for a literal @, or pass --no-mentions."
-            )
-        text = res.text
+        text = await _resolve_comment_mentions(
+            text, org=org, auth_method=auth_method, pat=pat,
+            strict_mentions=strict_mentions, not_done="Comment not posted",
+        )
 
     body = json.dumps({"text": text})
 
@@ -508,6 +505,72 @@ async def add_comment(
     return await _check_and_refetch(result, f"adding comment to #{work_item_id}",
                                     work_item_id, org=org, project=project,
                                     auth_method=auth_method, pat=pat, data_dir=data_dir)
+
+
+async def edit_comment(
+    *,
+    org: str,
+    project: str,
+    auth_method: str,
+    pat: str = "",
+    data_dir: Path,
+    work_item_id: int,
+    comment_id: int,
+    text: str,
+    resolve_mentions_flag: bool = True,
+    strict_mentions: bool = False,
+    dry_run: bool = False,
+) -> dict:
+    """Replace the text of a work item comment and refresh local JSONL store.
+
+    @mentions resolve as in :func:`add_comment`; with ``strict_mentions``, an
+    unresolved or ambiguous one aborts before anything is changed.
+
+    Returns the normalized JSONL record for the work item.
+    """
+    if dry_run:
+        click.echo(f"Would edit comment {comment_id} on work item #{work_item_id}:\n{_preview(text)}")
+        return {}
+
+    if resolve_mentions_flag:
+        text = await _resolve_comment_mentions(
+            text, org=org, auth_method=auth_method, pat=pat,
+            strict_mentions=strict_mentions, not_done="Comment not edited",
+        )
+
+    body = json.dumps({"text": text})
+
+    result = await run_operation(
+        auth_method, OP_EDIT_COMMENT,
+        org=org, project=project, pat=pat,
+        work_item_id=work_item_id,
+        comment_id=comment_id,
+        body=body,
+        content_type="application/json",
+    )
+
+    return await _check_and_refetch(result, f"editing comment {comment_id} on #{work_item_id}",
+                                    work_item_id, org=org, project=project,
+                                    auth_method=auth_method, pat=pat, data_dir=data_dir)
+
+
+def _preview(text: str) -> str:
+    return text[:200] + ("…" if len(text) > 200 else "")
+
+
+async def _resolve_comment_mentions(
+    text: str, *, org: str, auth_method: str, pat: str,
+    strict_mentions: bool, not_done: str,
+) -> str:
+    """Resolve @mentions in comment text, raising under ``strict_mentions`` on any failure."""
+    res = await resolve_mention_html(text, org=org, auth_method=auth_method, pat=pat)
+    _report_mentions(res)
+    if strict_mentions and (res.unresolved or res.ambiguous):
+        raise click.ClickException(
+            f"{not_done}: fix the @mentions above (use the full display "
+            "name or email), write &#64; for a literal @, or pass --no-mentions."
+        )
+    return res.text
 
 
 async def add_link(

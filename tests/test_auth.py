@@ -1,6 +1,9 @@
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
-from ado_search.auth import build_az_cli_command, build_download_command, build_powershell_command
+from ado_search.auth import (
+    build_az_cli_command, build_download_command, build_powershell_command, pat_request,
+)
 
 
 def test_build_az_cli_command_wiql():
@@ -222,6 +225,69 @@ def test_build_powershell_command_add_comment():
     assert "-Method Post" in ps_script
     assert "application/json" in ps_script
     assert "/comments" in ps_script
+
+
+_EDIT_COMMENT_URL = (
+    "https://dev.azure.com/contoso/My%20Project/_apis/wit/workItems/12345/comments/678"
+    "?api-version=7.1-preview.4"
+)
+
+
+def test_build_az_cli_command_edit_comment():
+    cmd = build_az_cli_command(
+        "edit-comment",
+        org="https://dev.azure.com/contoso",
+        project="My Project",
+        work_item_id=12345,
+        comment_id=678,
+        body='{"text": "<p>Edited</p>"}',
+        content_type="application/json",
+    )
+    assert cmd[:2] == ["az", "rest"]
+    assert cmd[cmd.index("--method") + 1] == "patch"
+    assert cmd[cmd.index("--url") + 1] == _EDIT_COMMENT_URL
+    assert cmd[cmd.index("--body") + 1] == '{"text": "<p>Edited</p>"}'
+    assert cmd[cmd.index("--headers") + 1] == "Content-Type=application/json"
+
+
+def test_build_powershell_command_edit_comment():
+    cmd = build_powershell_command(
+        "edit-comment",
+        org="https://dev.azure.com/contoso",
+        project="My Project",
+        work_item_id=12345,
+        comment_id=678,
+        body='{"text": "<p>Edited</p>"}',
+        content_type="application/json",
+    )
+    ps_script = cmd[cmd.index("-Command") + 1]
+    assert "-Method Patch" in ps_script
+    assert f"-Uri '{_EDIT_COMMENT_URL}'" in ps_script
+
+
+def test_pat_request_edit_comment():
+    response = MagicMock()
+    response.read.return_value = b'{"id": 678, "text": "<p>Edited</p>"}'
+    response.__enter__.return_value = response
+
+    with patch("urllib.request.urlopen", return_value=response) as mock_open:
+        data = pat_request(
+            "edit-comment",
+            org="https://dev.azure.com/contoso",
+            project="My Project",
+            pat="fake",
+            work_item_id=12345,
+            comment_id=678,
+            body='{"text": "<p>Edited</p>"}',
+            content_type="application/json",
+        )
+
+    req = mock_open.call_args.args[0]
+    assert req.get_method() == "PATCH"
+    assert req.full_url == _EDIT_COMMENT_URL
+    assert req.data == b'{"text": "<p>Edited</p>"}'
+    assert req.get_header("Content-type") == "application/json"
+    assert data == {"id": 678, "text": "<p>Edited</p>"}
 
 
 def test_build_download_command_az_cli():

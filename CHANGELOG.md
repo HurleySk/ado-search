@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.17.0] - 2026-10-12
+
+### Added
+
+- **`get-fields WORK_ITEM_ID [--field REF ...] [--out PATH]`** -- reads a work item live (`GET _apis/wit/workitems/{id}`, all three auth methods) and prints raw field values as JSON, so the description and acceptance criteria keep their HTML for editing. Defaults to type, title, state, assignee, tags, story points, description and acceptance criteria; `--field` takes reference names (repeatable). Identity fields show the uniqueName (email); a field with no value is `null`. `--out` writes the JSON to a UTF-8 file. Nothing is written to ADO or the local store.
+
+### Fixed
+
+- **Curly quotes lost with `az-cli` and `az-powershell` auth on Windows** -- az writes piped output in cp1252, which was decoded as UTF-8 and turned `’` into U+FFFD; output that is not valid UTF-8 now falls back to the locale encoding. pwsh wrote the console code page (`’` became `'`); its scripts now set UTF-8 output. PAT auth was not affected.
+
 ## [1.16.0] - 2026-10-12
 
 ### Added

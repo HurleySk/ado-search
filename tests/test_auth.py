@@ -2,7 +2,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from ado_search.auth import (
-    build_az_cli_command, build_download_command, build_powershell_command, pat_request,
+    build_az_cli_command, build_download_command, build_powershell_command, build_upload_command,
+    pat_request,
 )
 
 
@@ -288,6 +289,67 @@ def test_pat_request_edit_comment():
     assert req.data == b'{"text": "<p>Edited</p>"}'
     assert req.get_header("Content-type") == "application/json"
     assert data == {"id": 678, "text": "<p>Edited</p>"}
+
+
+_GET_FIELDS_URL = "https://dev.azure.com/contoso/_apis/wit/workitems/12345?api-version=7.1"
+
+
+def test_build_az_cli_command_get_fields():
+    cmd = build_az_cli_command(
+        "get-fields",
+        org="https://dev.azure.com/contoso",
+        project="My Project",
+        work_item_id=12345,
+    )
+    assert cmd[:2] == ["az", "rest"]
+    assert cmd[cmd.index("--method") + 1] == "get"
+    assert cmd[cmd.index("--url") + 1] == _GET_FIELDS_URL
+    assert "--body" not in cmd
+
+
+def test_build_powershell_command_get_fields():
+    cmd = build_powershell_command(
+        "get-fields",
+        org="https://dev.azure.com/contoso",
+        project="My Project",
+        work_item_id=12345,
+    )
+    ps_script = cmd[cmd.index("-Command") + 1]
+    assert "-Method Get" in ps_script
+    assert f"-Uri '{_GET_FIELDS_URL}'" in ps_script
+
+
+def test_powershell_commands_write_utf8():
+    for cmd in (
+        build_powershell_command("get-fields", org="https://dev.azure.com/contoso",
+                                 project="P", work_item_id=1),
+        build_upload_command("https://dev.azure.com/contoso/_apis/wit/attachments",
+                             Path("a.txt"), "az-powershell"),
+    ):
+        script = cmd[cmd.index("-Command") + 1]
+        assert script.startswith("try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) }")
+
+
+def test_pat_request_get_fields():
+    raw = '{"id": 12345, "fields": {"System.Description": "<p>What’s wrong</p>"}}'
+    response = MagicMock()
+    response.read.return_value = raw.encode("utf-8")
+    response.__enter__.return_value = response
+
+    with patch("urllib.request.urlopen", return_value=response) as mock_open:
+        data = pat_request(
+            "get-fields",
+            org="https://dev.azure.com/contoso",
+            project="",
+            pat="fake",
+            work_item_id=12345,
+        )
+
+    req = mock_open.call_args.args[0]
+    assert req.get_method() == "GET"
+    assert req.full_url == _GET_FIELDS_URL
+    assert req.data is None
+    assert data["fields"]["System.Description"] == "<p>What’s wrong</p>"
 
 
 def test_build_download_command_az_cli():

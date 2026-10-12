@@ -877,6 +877,41 @@ def list_comments_cmd(work_item_id, data_dir):
             click.echo(f"    {line}")
 
 
+@main.command("get-fields")
+@click.argument("work_item_id", type=int)
+@click.option("--field", "field_names", multiple=True,
+              help="Field reference name, e.g. System.Description (repeatable; default: type, "
+                   "title, state, assignee, tags, story points, description, acceptance criteria)")
+@click.option("--out", "out_path", type=click.Path(dir_okay=False, path_type=Path), default=None,
+              help="Write the JSON to this file (UTF-8) instead of stdout")
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Data directory (default: ./.ado-search)")
+def get_fields_cmd(work_item_id, field_names, out_path, data_dir):
+    """Print raw field values of a work item as JSON (live from ADO).
+
+    Values are what ADO stores, so the description and acceptance criteria keep
+    their HTML. Identity fields show the person's uniqueName (email); a field
+    with no value is null. Nothing is written to ADO or the local store.
+    """
+    import json
+
+    from ado_search.fields import get_fields
+
+    conn = _load_conn(data_dir, require_project=False)
+    values = asyncio.run(get_fields(
+        org=conn.org, project=conn.project,
+        auth_method=conn.auth_method, pat=conn.pat,
+        work_item_id=work_item_id, fields=field_names,
+    ))
+
+    text = json.dumps(values, indent=2, ensure_ascii=False)
+    if out_path is None:
+        click.echo(text)
+        return
+    out_path.write_text(text + "\n", encoding="utf-8")
+    click.echo(f"Wrote {len(values)} field(s) of work item #{work_item_id} to {out_path}")
+
+
 @main.command("upload-attachment")
 @click.argument("work_item_id", type=int)
 @click.argument("file_path", type=click.Path(exists=True, path_type=Path))

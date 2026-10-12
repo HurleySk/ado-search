@@ -92,6 +92,7 @@ ado-search sync --include-attachments
 | `ado-search upload-attachment <id> <file>` | Upload a local file as an attachment to a work item |
 | `ado-search list-links <id>` | List links on a work item (live) |
 | `ado-search list-comments <id>` | List comments on a work item, with their ids (live) |
+| `ado-search get-fields <id>` | Print raw field values as JSON, HTML intact (live) |
 | `ado-search grep "pattern"` | Regex search across work item fields |
 | `ado-search children <parent_id>` | List children (or full tree) of a work item |
 
@@ -194,6 +195,23 @@ ado-search list-links 12345
 # List all comments on a work item with their ids (live from ADO)
 ado-search list-comments 12345
 ```
+
+## Raw Fields
+
+`show` and the local store keep descriptions as plain text. `get-fields` reads the item live and prints raw values as JSON, so HTML can be edited and written back with `update --description @file.html`:
+
+```bash
+# Type, title, state, assignee, tags, story points, description, acceptance criteria
+ado-search get-fields 12345
+
+# Specific fields by reference name (repeatable)
+ado-search get-fields 12345 --field System.Description --field Custom.Effort
+
+# Write the JSON to a UTF-8 file instead of stdout
+ado-search get-fields 12345 --out fields.json
+```
+
+Identity fields show the uniqueName (email); a field with no value is `null`. Nothing is written to ADO or the local store.
 
 ## Configuration
 

@@ -25,8 +25,13 @@ OP_ADD_LINK = "add-link"
 OP_UPLOAD_ATTACHMENT = "upload-attachment"
 OP_IDENTITY_LOOKUP = "identity-lookup"
 OP_PROJECT_LIST = "project-list"
+OP_GET_FIELDS = "get-fields"
 
 PROJECT_LIST_TOP = 1000
+
+# pwsh writes redirected stdout in the console code page, which turns
+# characters such as curly quotes into "?" or plain quotes.
+_PS_UTF8_STDOUT = "try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; "
 
 
 @dataclass
@@ -206,6 +211,10 @@ OPERATIONS: dict[str, OperationDef] = {
         path="_apis/projects",
         query_params=[f"$top={PROJECT_LIST_TOP}", "api-version=7.1"],
     ),
+    OP_GET_FIELDS: OperationDef(
+        path="_apis/wit/workitems/{work_item_id}",
+        query_params=["api-version=7.1"],
+    ),
 }
 
 
@@ -328,7 +337,7 @@ def build_powershell_command(
             f"Invoke-RestMethod -Uri '{safe_url}' -Method Get -Headers $headers | ConvertTo-Json -Depth 10"
         )
 
-    return ["pwsh", "-NoProfile", "-Command", script]
+    return ["pwsh", "-NoProfile", "-Command", _PS_UTF8_STDOUT + script]
 
 
 def _escape_ps(s: str | None) -> str:
@@ -457,7 +466,7 @@ def build_upload_command(
         f"Invoke-RestMethod -Uri '{safe_url}' -Method Post -Headers $headers "
         f"-InFile '{safe_file}' -ContentType '{content_type}' | ConvertTo-Json -Depth 10"
     )
-    return ["pwsh", "-NoProfile", "-Command", script]
+    return ["pwsh", "-NoProfile", "-Command", _PS_UTF8_STDOUT + script]
 
 
 def build_download_command(

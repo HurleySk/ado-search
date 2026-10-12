@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 
 from click.testing import CliRunner
 
@@ -416,3 +416,78 @@ def test_edit_comment_command_reads_file_and_flags(tmp_path):
     assert kwargs["resolve_mentions_flag"] is False
     assert kwargs["dry_run"] is True
     assert "Edited comment" not in result.output
+
+
+_LIVE_ITEM = {"id": 42, "fields": {
+    "System.Title": "Broken",
+    "System.AssignedTo": {"displayName": "Jane Doe", "uniqueName": "Jane.Doe@co.com"},
+    "System.Description": "<p><strong>What’s wrong.</strong></p>\n<ul><li>x</li></ul>",
+}}
+
+
+def _invoke_get_fields(data_dir, *args, item=_LIVE_ITEM):
+    cfg = default_config()
+    cfg["organization"]["url"] = "https://dev.azure.com/contoso"
+    cfg["auth"] = {"method": "pat", "pat": "fake"}
+    save_config(cfg, data_dir / "config.toml")
+    response = MagicMock()
+    response.read.return_value = json.dumps(item).encode("utf-8")
+    response.__enter__.return_value = response
+    with patch("urllib.request.urlopen", return_value=response) as mock_open:
+        result = CliRunner().invoke(main, ["get-fields", *args, "--data-dir", str(data_dir)])
+    return result, mock_open
+
+
+def test_get_fields_prints_raw_json(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    result, mock_open = _invoke_get_fields(
+        data_dir, "42", "--field", "System.Description", "--field", "System.AssignedTo",
+    )
+    assert result.exit_code == 0, result.output
+    req = mock_open.call_args.args[0]
+    assert req.get_method() == "GET"
+    assert req.full_url == "https://dev.azure.com/contoso/_apis/wit/workitems/42?api-version=7.1"
+    assert json.loads(result.output) == {
+        "System.Description": "<p><strong>What’s wrong.</strong></p>\n<ul><li>x</li></ul>",
+        "System.AssignedTo": "Jane.Doe@co.com",
+    }
+
+
+def test_get_fields_default_fields(tmp_path):
+    from ado_search.fields import DEFAULT_FIELDS
+
+    result, _ = _invoke_get_fields(tmp_path / ".ado-search", "42")
+    assert result.exit_code == 0, result.output
+    values = json.loads(result.output)
+    assert list(values) == list(DEFAULT_FIELDS)
+    assert values["System.Title"] == "Broken"
+    assert values["System.Tags"] is None
+
+
+def test_get_fields_out_writes_utf8_file_and_no_store(tmp_path):
+    data_dir = tmp_path / ".ado-search"
+    out = tmp_path / "fields.json"
+    result, _ = _invoke_get_fields(data_dir, "42", "--field", "System.Description", "--out", str(out))
+    assert result.exit_code == 0, result.output
+    assert "Wrote 1 field(s) of work item #42" in result.output
+    assert "<p>" not in result.output
+    assert "What’s".encode("utf-8") in out.read_bytes()
+    assert json.loads(out.read_text(encoding="utf-8"))["System.Description"].startswith("<p><strong>")
+    assert sorted(p.name for p in data_dir.iterdir()) == ["config.toml"]
+
+
+def test_get_fields_http_error_exits_nonzero(tmp_path):
+    from urllib.error import HTTPError
+
+    data_dir = tmp_path / ".ado-search"
+    data_dir.mkdir()
+    cfg = default_config()
+    cfg["organization"]["url"] = "https://dev.azure.com/contoso"
+    cfg["auth"] = {"method": "pat", "pat": "fake"}
+    save_config(cfg, data_dir / "config.toml")
+    err = HTTPError("u", 404, "Not Found", {}, None)
+    err.read = lambda: b"TF401232: Work item 9 does not exist"
+    with patch("urllib.request.urlopen", side_effect=err):
+        result = CliRunner().invoke(main, ["get-fields", "9", "--data-dir", str(data_dir)])
+    assert result.exit_code == 1
+    assert "HTTP 404" in result.output

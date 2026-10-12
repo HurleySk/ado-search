@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import locale
 import os
 import shutil
 from contextlib import nullcontext
@@ -32,6 +33,18 @@ class CommandResult:
         if isinstance(data, str):
             data = json.loads(data)
         return data
+
+
+def _decode_output(data: bytes) -> str:
+    """Decode subprocess output: UTF-8, else the locale encoding.
+
+    az on Windows writes piped output in the ANSI code page (cp1252), where a
+    curly quote is one byte that is not valid UTF-8.
+    """
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode(locale.getpreferredencoding(False) or "utf-8", errors="replace")
 
 
 async def run_command(
@@ -69,8 +82,8 @@ async def run_command(
         result = CommandResult(
             command=cmd,
             returncode=proc.returncode or 0,
-            stdout=stdout_bytes.decode("utf-8", errors="replace").strip(),
-            stderr=stderr_bytes.decode("utf-8", errors="replace").strip(),
+            stdout=_decode_output(stdout_bytes).strip(),
+            stderr=_decode_output(stderr_bytes).strip(),
         )
         if result.returncode == 0:
             return result

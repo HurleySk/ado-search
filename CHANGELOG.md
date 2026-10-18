@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.18.0] - 2026-10-17
+
+### Added
+
+- **`mentions [--since DATETIME] [--limit N] [--json] [--include-own]`** -- lists the comments that @mention the authenticated user, newest first, live from ADO. The user comes from `_apis/connectionData`; work items come from the WIQL macro `@RecentMentions`, which ADO keeps for 30 days. A comment counts when one of its mention anchors (`data-vss-mention="version:2.0,<id>"`) carries the user's id, or, when it has no anchors at all, when its text holds `@Display Name` or `@email`. Each record shows the work item id, title, state, type and assignee, then the comment id, author, created date (UTC) and plain text with mentions as `@Name`. `--since` keeps comments created or modified after an ISO datetime (UTC unless it has an offset); comments you wrote are dropped unless `--include-own`; `--limit` defaults to 50. Works with all three auth methods. Nothing is written to ADO or the local store.
+
 ## [1.17.0] - 2026-10-12
 
 ### Added

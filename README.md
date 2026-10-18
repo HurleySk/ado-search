@@ -93,6 +93,7 @@ ado-search sync --include-attachments
 | `ado-search list-links <id>` | List links on a work item (live) |
 | `ado-search list-comments <id>` | List comments on a work item, with their ids (live) |
 | `ado-search get-fields <id>` | Print raw field values as JSON, HTML intact (live) |
+| `ado-search mentions` | List comments that @mention you, newest first (live) |
 | `ado-search grep "pattern"` | Regex search across work item fields |
 | `ado-search children <parent_id>` | List children (or full tree) of a work item |
 
@@ -212,6 +213,23 @@ ado-search get-fields 12345 --out fields.json
 ```
 
 Identity fields show the uniqueName (email); a field with no value is `null`. Nothing is written to ADO or the local store.
+
+## Mentions
+
+`mentions` lists the comments that @mention you (the authenticated user), newest first, read live from ADO. Work items come from the WIQL macro `@RecentMentions`, so it covers the last 30 days:
+
+```bash
+# Every comment that mentions you (up to 50)
+ado-search mentions
+
+# Only comments created or modified after a UTC datetime, as JSON
+ado-search mentions --since 2026-10-15T00:00:00Z --json
+
+# Keep your own comments that mention you, and show up to 200
+ado-search mentions --include-own --limit 200
+```
+
+Each record shows the work item id, title, state, type and assignee, then the comment id, author, created date (UTC) and plain text, with mentions written as `@Name`. A comment counts when one of its mention anchors carries your identity id; a comment with no mention anchors at all counts when its text holds `@Your Name` or `@your email`. Nothing is written to ADO or the local store.
 
 ## Configuration
 

@@ -352,6 +352,38 @@ def test_pat_request_get_fields():
     assert data["fields"]["System.Description"] == "<p>What’s wrong</p>"
 
 
+_CONNECTION_DATA_URL = "https://dev.azure.com/contoso/_apis/connectionData?api-version=7.1-preview"
+
+
+def test_build_az_cli_command_connection_data():
+    cmd = build_az_cli_command("connection-data", org="https://dev.azure.com/contoso", project="")
+    assert cmd[:2] == ["az", "rest"]
+    assert cmd[cmd.index("--method") + 1] == "get"
+    assert cmd[cmd.index("--url") + 1] == _CONNECTION_DATA_URL
+
+
+def test_build_powershell_command_connection_data():
+    cmd = build_powershell_command("connection-data", org="https://dev.azure.com/contoso", project="")
+    ps_script = cmd[cmd.index("-Command") + 1]
+    assert "-Method Get" in ps_script
+    assert f"-Uri '{_CONNECTION_DATA_URL}'" in ps_script
+
+
+def test_pat_request_connection_data():
+    response = MagicMock()
+    response.read.return_value = b'{"authenticatedUser": {"id": "abc"}}'
+    response.__enter__.return_value = response
+
+    with patch("urllib.request.urlopen", return_value=response) as mock_open:
+        data = pat_request("connection-data", org="https://dev.azure.com/contoso", project="", pat="fake")
+
+    req = mock_open.call_args.args[0]
+    assert req.get_method() == "GET"
+    assert req.full_url == _CONNECTION_DATA_URL
+    assert req.data is None
+    assert data["authenticatedUser"]["id"] == "abc"
+
+
 def test_build_download_command_az_cli():
     cmd = build_download_command(
         "https://dev.azure.com/contoso/_apis/wit/attachments/abc-123",

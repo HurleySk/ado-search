@@ -26,6 +26,7 @@ OP_UPLOAD_ATTACHMENT = "upload-attachment"
 OP_IDENTITY_LOOKUP = "identity-lookup"
 OP_PROJECT_LIST = "project-list"
 OP_GET_FIELDS = "get-fields"
+OP_CONNECTION_DATA = "connection-data"
 
 PROJECT_LIST_TOP = 1000
 
@@ -214,6 +215,10 @@ OPERATIONS: dict[str, OperationDef] = {
     OP_GET_FIELDS: OperationDef(
         path="_apis/wit/workitems/{work_item_id}",
         query_params=["api-version=7.1"],
+    ),
+    OP_CONNECTION_DATA: OperationDef(
+        path="_apis/connectionData",
+        query_params=["api-version=7.1-preview"],
     ),
 }
 

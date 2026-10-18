@@ -912,6 +912,57 @@ def get_fields_cmd(work_item_id, field_names, out_path, data_dir):
     click.echo(f"Wrote {len(values)} field(s) of work item #{work_item_id} to {out_path}")
 
 
+def _parse_since(ctx, param, value):
+    if value is None:
+        return None
+    from ado_search.mentions import parse_utc
+    try:
+        return parse_utc(value)
+    except ValueError:
+        raise click.BadParameter(f"not an ISO datetime: {value!r} (e.g. 2026-10-15T00:00:00Z)")
+
+
+@main.command("mentions")
+@click.option("--since", callback=_parse_since, default=None, metavar="DATETIME",
+              help="Keep only comments created or modified after this ISO datetime "
+                   "(UTC unless it has an offset), e.g. 2026-10-15T00:00:00Z")
+@click.option("--limit", type=click.IntRange(min=1), default=50, show_default=True,
+              help="Max comments to show")
+@click.option("--json", "as_json", is_flag=True, help="Print the records as a JSON array")
+@click.option("--include-own", is_flag=True,
+              help="Keep comments you wrote yourself (dropped by default)")
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Data directory (default: ./.ado-search)")
+def mentions_cmd(since, limit, as_json, include_own, data_dir):
+    """List comments that @mention you, newest first (live from ADO).
+
+    "You" is the authenticated user (connectionData). Work items come from the
+    WIQL macro @RecentMentions, which ADO keeps for 30 days. Each record shows
+    the work item's id, title, state, type and assignee, then the comment's id,
+    author, created date (UTC) and plain text. Nothing is written to ADO or the
+    local store.
+    """
+    import json
+
+    from ado_search.mentions import find_mentions, format_mentions
+
+    conn = _load_conn(data_dir)
+    me, records, errors = asyncio.run(find_mentions(
+        org=conn.org, project=conn.project,
+        auth_method=conn.auth_method, pat=conn.pat,
+        since=since, include_own=include_own,
+        max_concurrent=conn.cfg.get("sync", {}).get("performance", {}).get("max_concurrent", 5),
+    ))
+    for err in errors:
+        click.echo(f"Warning: {err}", err=True)
+
+    shown = records[:limit]
+    if as_json:
+        click.echo(json.dumps(shown, indent=2, ensure_ascii=False))
+    else:
+        click.echo(format_mentions(shown, me, total=len(records), since=since))
+
+
 @main.command("upload-attachment")
 @click.argument("work_item_id", type=int)
 @click.argument("file_path", type=click.Path(exists=True, path_type=Path))

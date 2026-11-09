@@ -27,6 +27,13 @@ OP_IDENTITY_LOOKUP = "identity-lookup"
 OP_PROJECT_LIST = "project-list"
 OP_GET_FIELDS = "get-fields"
 OP_CONNECTION_DATA = "connection-data"
+OP_WIKI_PAGE_PUT = "wiki-page-put"
+OP_TEST_PLAN_LIST = "test-plan-list"
+OP_TEST_SUITE_LIST = "test-suite-list"
+OP_TEST_SUITE_CASES = "test-suite-cases"
+OP_TEST_POINT_LIST = "test-point-list"
+OP_TEST_RUN_LIST = "test-run-list"
+OP_TEST_RESULT_LIST = "test-result-list"
 
 PROJECT_LIST_TOP = 1000
 
@@ -78,6 +85,9 @@ def _resolve_url(op: OperationDef, *, org: str, project: str, **kwargs) -> str:
         .replace("{work_item_id}", str(work_item_id))
         .replace("{comment_id}", str(comment_id))
         .replace("{work_item_type}", quote(str(work_item_type), safe=""))
+        .replace("{plan_id}", str(kwargs.get("plan_id") or ""))
+        .replace("{suite_id}", str(kwargs.get("suite_id") or ""))
+        .replace("{run_id}", str(kwargs.get("run_id") or ""))
     )
 
     api_url = f"{org}/{api_path}"
@@ -88,6 +98,8 @@ def _resolve_url(op: OperationDef, *, org: str, project: str, **kwargs) -> str:
         params = [p.replace("{path}", quote(path or "", safe="/")) for p in params]
     if "{encoded_path}" in " ".join(op.query_params):
         params = [p.replace("{encoded_path}", quote(path or "", safe="")) for p in params]
+    # Caller-supplied "name=value" pairs, already URL-encoded (paging tokens, filters)
+    params.extend(kwargs.get("params") or [])
 
     if params:
         api_url += "?" + "&".join(params)
@@ -219,6 +231,38 @@ OPERATIONS: dict[str, OperationDef] = {
     OP_CONNECTION_DATA: OperationDef(
         path="_apis/connectionData",
         query_params=["api-version=7.1-preview"],
+    ),
+    # The operations below run through request_full (headers needed for
+    # continuation tokens and the wiki ETag), never through az rest.
+    OP_WIKI_PAGE_PUT: OperationDef(
+        method="PUT",
+        path="{url_project}/_apis/wiki/wikis/{url_wiki}/pages",
+        query_params=["path={path}", "api-version=7.1"],
+        has_body=True,
+    ),
+    OP_TEST_PLAN_LIST: OperationDef(
+        path="{url_project}/_apis/testplan/plans",
+        query_params=["includePlanDetails=true", "api-version=7.1"],
+    ),
+    OP_TEST_SUITE_LIST: OperationDef(
+        path="{url_project}/_apis/testplan/Plans/{plan_id}/suites",
+        query_params=["expand=defaultTesters", "api-version=7.1"],
+    ),
+    OP_TEST_SUITE_CASES: OperationDef(
+        path="{url_project}/_apis/testplan/Plans/{plan_id}/Suites/{suite_id}/TestCase",
+        query_params=["returnIdentityRef=true", "expand=true", "api-version=7.1"],
+    ),
+    OP_TEST_POINT_LIST: OperationDef(
+        path="{url_project}/_apis/testplan/Plans/{plan_id}/Suites/{suite_id}/TestPoint",
+        query_params=["includePointDetails=true", "returnIdentityRef=true", "api-version=7.1"],
+    ),
+    OP_TEST_RUN_LIST: OperationDef(
+        path="{url_project}/_apis/test/runs",
+        query_params=["includeRunDetails=true", "api-version=7.1"],
+    ),
+    OP_TEST_RESULT_LIST: OperationDef(
+        path="{url_project}/_apis/test/Runs/{run_id}/results",
+        query_params=["detailsToInclude=WorkItems", "api-version=7.1"],
     ),
 }
 
@@ -422,6 +466,109 @@ def pat_request(
             return json.loads(resp.read().decode("utf-8"))
     except HTTPError as e:
         raise RuntimeError(f"HTTP {e.code} for {operation}: {e.read().decode('utf-8', errors='replace')[:500]}")
+
+
+@dataclass
+class FullResponse:
+    """Status, lower-cased response headers and raw body text of one request."""
+    status: int
+    headers: dict[str, str]
+    text: str
+
+
+def _url_kwargs(kwargs: dict) -> dict:
+    keys = ("wiki", "path", "work_item_id", "url", "work_item_type", "comment_id",
+            "plan_id", "suite_id", "run_id", "params")
+    return {k: kwargs[k] for k in keys if k in kwargs}
+
+
+def pat_request_full(
+    operation: str,
+    *,
+    org: str,
+    project: str,
+    pat: str,
+    body: str | bytes | None = None,
+    content_type: str | None = None,
+    extra_headers: dict[str, str] | None = None,
+    **kwargs,
+) -> FullResponse:
+    """PAT request that keeps the status and response headers. HTTP errors are returned, not raised."""
+    import base64
+    from urllib.request import Request, urlopen
+    from urllib.error import HTTPError
+
+    op = OPERATIONS.get(operation)
+    if op is None:
+        raise ValueError(f"Unknown operation: {operation}")
+
+    api_url = _resolve_url(op, org=org, project=project, **_url_kwargs(kwargs))
+    creds = base64.b64encode(f":{pat}".encode()).decode()
+    headers = {"Authorization": f"Basic {creds}", "Content-Type": content_type or "application/json"}
+    headers.update(extra_headers or {})
+    data = None if body is None else (body if isinstance(body, bytes) else body.encode("utf-8"))
+
+    req = Request(api_url, data=data, headers=headers, method=op.method)
+    try:
+        with urlopen(req, timeout=60) as resp:
+            return FullResponse(resp.status, {k.lower(): v for k, v in resp.headers.items()},
+                                resp.read().decode("utf-8"))
+    except HTTPError as e:
+        return FullResponse(e.code, {k.lower(): v for k, v in (e.headers or {}).items()},
+                            e.read().decode("utf-8", errors="replace"))
+
+
+def build_full_request_command(
+    operation: str,
+    auth_method: str,
+    *,
+    org: str,
+    project: str,
+    body_file: Path | None = None,
+    content_type: str | None = None,
+    extra_headers: dict[str, str] | None = None,
+    **kwargs,
+) -> list[str]:
+    """pwsh Invoke-WebRequest that prints {status, headers, content} as JSON.
+
+    Used for az-cli and az-powershell auth when the caller needs response
+    headers (az rest drops them). A body is read from ``body_file`` so large
+    content never goes on the command line.
+    """
+    op = OPERATIONS.get(operation)
+    if op is None:
+        raise ValueError(f"Unknown operation: {operation}")
+
+    api_url = _resolve_url(op, org=org, project=project, **_url_kwargs(kwargs))
+    if auth_method == "az-powershell":
+        token_expr = f"(Get-AzAccessToken -ResourceUrl '{ADO_RESOURCE_ID}').Token"
+    else:
+        token_expr = (
+            f"(az account get-access-token --resource '{ADO_RESOURCE_ID}' "
+            f"--query accessToken -o tsv).Trim()"
+        )
+    def sq(s: str) -> str:
+        # Single-quoted PowerShell literal: only ' needs escaping (doubled).
+        return "'" + str(s).replace("'", "''") + "'"
+
+    header_items = ['Authorization = "Bearer $token"']
+    for name, value in (extra_headers or {}).items():
+        header_items.append(f"{sq(name)} = {sq(value)}")
+    request = (
+        f"Invoke-WebRequest -Uri {sq(api_url)} -Method {op.method.capitalize()} "
+        f"-Headers $headers -ContentType {sq(content_type or 'application/json')} "
+        "-SkipHttpErrorCheck -UseBasicParsing"
+    )
+    if body_file is not None:
+        request += f" -InFile {sq(body_file)}"
+    script = (
+        f"$token = {token_expr}; "
+        f"$headers = @{{{'; '.join(header_items)}}}; "
+        f"$r = {request}; "
+        "$h = @{}; foreach ($k in $r.Headers.Keys) { $h[$k.ToLower()] = ($r.Headers[$k] -join ', ') }; "
+        "@{status = [int]$r.StatusCode; headers = $h; content = [string]$r.Content} | ConvertTo-Json -Depth 5 -Compress"
+    )
+    return ["pwsh", "-NoProfile", "-Command", _PS_UTF8_STDOUT + script]
 
 
 def pat_download_binary(*, url: str, pat: str, dest_path: Path) -> None:

@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.19.0] - 2026-11-09
+
+### Added
+
+- **Test Plans, live** -- `test-plans [--owner TEXT] [--active]`, `test-suites PLAN`, `test-cases PLAN SUITE [--field REF ...]`, `test-points PLAN SUITE`, `test-runs [--plan PLAN] [--limit N]` and `test-results RUN`. Plans show owner, area, iteration, dates and root suite; suites print as a tree with type (static, requirement, query), linked requirement and query; test cases show steps as action/expected pairs, shared-step references, parameters and tester/configuration assignments; points show the latest outcome and run; results show linked bugs. All take `--project`, `--json` and `--out`, and page through `x-ms-continuationtoken` or `$top`/`$skip`. Nothing is written to ADO or the local store.
+- **`wiki-show [PAGE_PATH]`** -- prints one wiki page's markdown, or lists the wiki's page paths, live and in any project (`--project`, `--wiki`, `--out`).
+- **`wiki-update PAGE_PATH FILE`** -- replaces a wiki page with a local UTF-8 file. Reads the page first and sends its ETag as `If-Match`, so a page changed in between is refused instead of overwritten. `--dry-run` prints the unified diff only, `--comment` stores a revision comment, `--create` allows a new page; identical content makes no request.
+- **`run_operation_full`** -- runs an operation and keeps the response headers. PAT uses direct HTTP; `az-cli` and `az-powershell` use `pwsh Invoke-WebRequest` because `az rest` drops headers. Writes are not retried, and ADO's 203 sign-in response is reported as not signed in.
+
 ## [1.18.0] - 2026-10-17
 
 ### Added

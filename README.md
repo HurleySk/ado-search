@@ -94,6 +94,14 @@ ado-search sync --include-attachments
 | `ado-search list-comments <id>` | List comments on a work item, with their ids (live) |
 | `ado-search get-fields <id>` | Print raw field values as JSON, HTML intact (live) |
 | `ado-search mentions` | List comments that @mention you, newest first (live) |
+| `ado-search test-plans` | List test plans with owner, area, iteration, dates (live) |
+| `ado-search test-suites <plan>` | Print a plan's suite tree: static, requirement or query suites (live) |
+| `ado-search test-cases <plan> <suite>` | List a suite's test cases with steps, shared steps and testers (live) |
+| `ado-search test-points <plan> <suite>` | List test points: configuration, tester, latest outcome (live) |
+| `ado-search test-runs` | List test runs with outcome counts, optionally for one plan (live) |
+| `ado-search test-results <run>` | List a run's results with linked bugs (live) |
+| `ado-search wiki-show [path]` | Print a wiki page's markdown, or list page paths (live, any project) |
+| `ado-search wiki-update <path> <file>` | Replace a wiki page from a local file, ETag-guarded (`--dry-run` diffs) |
 | `ado-search grep "pattern"` | Regex search across work item fields |
 | `ado-search children <parent_id>` | List children (or full tree) of a work item |
 
@@ -230,6 +238,47 @@ ado-search mentions --include-own --limit 200
 ```
 
 Each record shows the work item id, title, state, type and assignee, then the comment id, author, created date (UTC) and plain text, with mentions written as `@Name`. A comment counts when one of its mention anchors carries your identity id; a comment with no mention anchors at all counts when its text holds `@Your Name` or `@your email`. Nothing is written to ADO or the local store.
+
+## Test Plans
+
+Read Azure Test Plans live. Every command takes `--project` (default: the configured project), `--json` and `--out FILE`; nothing is written to ADO or the local store.
+
+```bash
+# Plans, optionally only active ones or those whose owner matches
+ado-search test-plans --project "Wave 3" --owner "Rahman" --active
+
+# A plan's suite tree; requirement suites show their work item, query suites their query
+ado-search test-suites 76227
+
+# Test cases in a suite: steps (action => expected), shared-step references, parameters, testers
+ado-search test-cases 76227 76239
+ado-search test-cases 76227 76239 --field System.Title --field Microsoft.VSTS.TCM.Steps --json
+
+# Points (configuration, tester, latest outcome), runs, and one run's results with linked bugs
+ado-search test-points 76227 76238
+ado-search test-runs --plan 76472 --limit 50
+ado-search test-results 31456
+```
+
+Paging follows `x-ms-continuationtoken` (plans, suites, cases, points) or `$top`/`$skip` (runs, results).
+
+## Wiki Pages
+
+`wiki-show` and `wiki-update` work on single pages in any project, independent of `sync`. `--wiki` defaults to the project's only wiki.
+
+```bash
+# List page paths, or print one page's markdown
+ado-search wiki-show --project "Reporting Sandbox"
+ado-search wiki-show "/QA SOP" --project "Reporting Sandbox" --out qa-sop.md
+
+# Show the diff against the live page, then replace it
+ado-search wiki-update "/QA SOP" qa-sop.md --project "Reporting Sandbox" --dry-run
+ado-search wiki-update "/QA SOP" qa-sop.md --project "Reporting Sandbox" --comment "Finalize QA SOP"
+```
+
+`wiki-update` reads the page first and sends its ETag with `If-Match`, so a page edited in between is refused (HTTP 412) instead of overwritten. The file is read as UTF-8; a BOM is dropped and line endings become LF. A missing page is an error unless `--create` is passed. Identical content makes no request.
+
+With `az-cli` or `az-powershell` auth these commands call ADO through `pwsh` `Invoke-WebRequest` (with a token from `az account get-access-token` or `Get-AzAccessToken`), because `az rest` does not return response headers.
 
 ## Configuration
 

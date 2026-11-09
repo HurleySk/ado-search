@@ -912,6 +912,197 @@ def get_fields_cmd(work_item_id, field_names, out_path, data_dir):
     click.echo(f"Wrote {len(values)} field(s) of work item #{work_item_id} to {out_path}")
 
 
+def _live_conn(data_dir: str | None, project: str | None):
+    """Connection for live reads/writes; --project overrides the configured default."""
+    from ado_search.testplans import Conn
+
+    conn = _load_conn(data_dir, require_project=not project)
+    return Conn(org=conn.org, project=project or conn.project,
+                auth_method=conn.auth_method, pat=conn.pat)
+
+
+def _emit(records, as_json: bool, text: str, out_path: Path | None = None) -> None:
+    import json
+
+    body = json.dumps(records, indent=2, ensure_ascii=False) if as_json else text
+    if out_path is None:
+        click.echo(body)
+        return
+    out_path.write_text(body + "\n", encoding="utf-8")
+    click.echo(f"Wrote {out_path}")
+
+
+_project_opt = click.option("--project", default=None,
+                            help="Project name (default: the configured project)")
+_json_opt = click.option("--json", "as_json", is_flag=True, help="Print the records as JSON")
+_out_opt = click.option("--out", "out_path", type=click.Path(dir_okay=False, path_type=Path),
+                        default=None, help="Write the output to this file (UTF-8) instead of stdout")
+_data_dir_opt = click.option("--data-dir", type=click.Path(), default=None,
+                             help="Data directory (default: ./.ado-search)")
+
+
+@main.command("test-plans")
+@click.option("--owner", default=None, help="Keep plans whose owner name or email contains this text")
+@click.option("--active", is_flag=True, help="Only active plans")
+@_project_opt
+@_json_opt
+@_out_opt
+@_data_dir_opt
+def test_plans_cmd(owner, active, project, as_json, out_path, data_dir):
+    """List test plans (live from ADO): id, state, owner, area, iteration, dates, root suite."""
+    from ado_search.testplans import format_plans, list_plans
+
+    conn = _live_conn(data_dir, project)
+    plans = asyncio.run(list_plans(conn, owner=owner, active=active))
+    _emit(plans, as_json, format_plans(plans), out_path)
+
+
+@main.command("test-suites")
+@click.argument("plan_id", type=int)
+@_project_opt
+@_json_opt
+@_out_opt
+@_data_dir_opt
+def test_suites_cmd(plan_id, project, as_json, out_path, data_dir):
+    """Print a test plan's suite tree (live): type (static, requirement, query), linked requirement, query."""
+    from ado_search.testplans import format_suites, list_suites
+
+    conn = _live_conn(data_dir, project)
+    suites = asyncio.run(list_suites(conn, plan_id))
+    _emit(suites, as_json, format_suites(plan_id, suites), out_path)
+
+
+@main.command("test-cases")
+@click.argument("plan_id", type=int)
+@click.argument("suite_id", type=int)
+@click.option("--field", "field_names", multiple=True,
+              help="Work item field reference name (repeatable; default: title, state, created by/date, "
+                   "assignee, area, tags, priority, automation status, steps, parameters)")
+@_project_opt
+@_json_opt
+@_out_opt
+@_data_dir_opt
+def test_cases_cmd(plan_id, suite_id, field_names, project, as_json, out_path, data_dir):
+    """List the test cases in one suite (live) with their steps and tester/configuration assignments."""
+    from ado_search.testplans import format_cases, list_suite_cases
+
+    conn = _live_conn(data_dir, project)
+    cases = asyncio.run(list_suite_cases(conn, plan_id, suite_id, field_names or None))
+    _emit(cases, as_json, format_cases(plan_id, suite_id, cases), out_path)
+
+
+@main.command("test-points")
+@click.argument("plan_id", type=int)
+@click.argument("suite_id", type=int)
+@_project_opt
+@_json_opt
+@_out_opt
+@_data_dir_opt
+def test_points_cmd(plan_id, suite_id, project, as_json, out_path, data_dir):
+    """List the test points in one suite (live): configuration, tester, latest outcome and run."""
+    from ado_search.testplans import format_points, list_points
+
+    conn = _live_conn(data_dir, project)
+    points = asyncio.run(list_points(conn, plan_id, suite_id))
+    _emit(points, as_json, format_points(plan_id, suite_id, points), out_path)
+
+
+@main.command("test-runs")
+@click.option("--plan", "plan_id", type=int, default=None, help="Only runs of this test plan")
+@click.option("--limit", type=click.IntRange(min=1), default=None, help="Stop after this many runs")
+@_project_opt
+@_json_opt
+@_out_opt
+@_data_dir_opt
+def test_runs_cmd(plan_id, limit, project, as_json, out_path, data_dir):
+    """List test runs (live): state, manual/automated, owner, dates, outcome counts."""
+    from ado_search.testplans import format_runs, list_runs
+
+    conn = _live_conn(data_dir, project)
+    runs = asyncio.run(list_runs(conn, plan_id, limit))
+    _emit(runs, as_json, format_runs(runs), out_path)
+
+
+@main.command("test-results")
+@click.argument("run_id", type=int)
+@_project_opt
+@_json_opt
+@_out_opt
+@_data_dir_opt
+def test_results_cmd(run_id, project, as_json, out_path, data_dir):
+    """List one test run's results (live): test case, outcome, tester, comment, linked bugs."""
+    from ado_search.testplans import format_results, list_results
+
+    conn = _live_conn(data_dir, project)
+    results = asyncio.run(list_results(conn, run_id))
+    _emit(results, as_json, format_results(run_id, results), out_path)
+
+
+@main.command("wiki-show")
+@click.argument("page_path", required=False)
+@click.option("--wiki", default=None, help="Wiki name (default: the project's only wiki)")
+@_project_opt
+@_out_opt
+@_data_dir_opt
+def wiki_show_cmd(page_path, wiki, project, out_path, data_dir):
+    """Print one wiki page's markdown (live), or list the wiki's page paths when PAGE_PATH is omitted."""
+    from ado_search.wiki_pages import get_page, list_pages, resolve_wiki
+
+    conn = _live_conn(data_dir, project)
+
+    async def run():
+        name = await resolve_wiki(conn, wiki)
+        if not page_path:
+            return "\n".join(await list_pages(conn, name))
+        content, _, _ = await get_page(conn, name, page_path)
+        return content
+
+    text = asyncio.run(run())
+    if out_path is None:
+        click.echo(text)
+    else:
+        out_path.write_text(text, encoding="utf-8")
+        click.echo(f"Wrote {out_path}")
+
+
+@main.command("wiki-update")
+@click.argument("page_path")
+@click.argument("file_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--wiki", default=None, help="Wiki name (default: the project's only wiki)")
+@click.option("--comment", default=None, help="Revision comment stored with the change")
+@click.option("--create", is_flag=True, help="Create the page if it does not exist")
+@click.option("--dry-run", is_flag=True, help="Print the diff against the live page; change nothing")
+@_project_opt
+@_data_dir_opt
+def wiki_update_cmd(page_path, file_path, wiki, comment, create, dry_run, project, data_dir):
+    """Replace a wiki page's content with FILE_PATH (UTF-8 markdown).
+
+    Reads the live page first and sends its ETag with If-Match, so a page edited
+    in between is refused rather than overwritten. --dry-run prints the diff only.
+    """
+    from ado_search.wiki_pages import resolve_wiki, update_page
+
+    conn = _live_conn(data_dir, project)
+    content = file_path.read_text(encoding="utf-8")
+
+    async def run():
+        name = await resolve_wiki(conn, wiki)
+        return name, await update_page(conn, name, page_path, content, comment=comment,
+                                       create=create, dry_run=dry_run)
+
+    name, out = asyncio.run(run())
+    where = f"{conn.project}/{name}:{page_path}"
+    if not out["changed"]:
+        click.echo(f"No changes: {where} already matches {file_path.name}")
+        return
+    if out["diff"]:
+        click.echo(out["diff"].rstrip("\n"))
+    if dry_run:
+        click.echo(f"\nDry run: {'would create' if out['created'] else 'would update'} {where}")
+    else:
+        click.echo(f"\n{'Created' if out['created'] else 'Updated'} {where} (ETag {out['etag']})")
+
+
 def _parse_since(ctx, param, value):
     if value is None:
         return None

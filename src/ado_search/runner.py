@@ -6,7 +6,7 @@ import locale
 import os
 import shutil
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypedDict
 
@@ -26,6 +26,7 @@ class CommandResult:
     returncode: int
     stdout: str
     stderr: str
+    headers: dict[str, str] = field(default_factory=dict)
 
     def parse_json(self):
         """Parse stdout as JSON, unwrapping double-serialization from ConvertTo-Json."""
@@ -133,6 +134,72 @@ async def run_operation(
     from ado_search.auth import build_command
     cmd = build_command(operation, auth_method, org=org, project=project, **kwargs)
     return await run_command(cmd, retries=retries)
+
+
+def _full_result(operation: str, status: int, headers: dict, text: str) -> CommandResult:
+    if status == 203:
+        # ADO answers an unauthenticated call with 203 and a sign-in page.
+        return CommandResult(["request_full", operation], 1, "",
+                             f"HTTP 203 for {operation}: not signed in (sign-in page returned)", headers)
+    if 200 <= status < 300:
+        return CommandResult(["request_full", operation], 0, text, "", headers)
+    return CommandResult(["request_full", operation], 1, "", f"HTTP {status} for {operation}: {text[:500]}", headers)
+
+
+async def run_operation_full(
+    auth_method: str,
+    operation: str,
+    *,
+    org: str,
+    project: str,
+    pat: str = "",
+    body: str | bytes | None = None,
+    content_type: str | None = None,
+    extra_headers: dict[str, str] | None = None,
+    **kwargs,
+) -> CommandResult:
+    """Run an operation and keep the response headers (``CommandResult.headers``, lower-cased).
+
+    Needed for continuation tokens and ETags. PAT goes over HTTP directly; az-cli
+    and az-powershell go through pwsh Invoke-WebRequest. Writes are not retried.
+    """
+    from ado_search.auth import OPERATIONS, build_full_request_command, pat_request_full
+
+    if auth_method == "pat":
+        try:
+            resp = await asyncio.to_thread(
+                pat_request_full, operation, org=org, project=project, pat=pat, body=body,
+                content_type=content_type, extra_headers=extra_headers, **kwargs,
+            )
+        except Exception as e:
+            return CommandResult(["request_full", operation], 1, "", str(e))
+        return _full_result(operation, resp.status, resp.headers, resp.text)
+
+    import tempfile
+    body_file = None
+    try:
+        if body is not None:
+            fd, name = tempfile.mkstemp(prefix="ado-search-", suffix=".body")
+            with os.fdopen(fd, "wb") as f:
+                f.write(body if isinstance(body, bytes) else body.encode("utf-8"))
+            body_file = Path(name)
+        cmd = build_full_request_command(
+            operation, auth_method, org=org, project=project, body_file=body_file,
+            content_type=content_type, extra_headers=extra_headers, **kwargs,
+        )
+        retries = 3 if OPERATIONS[operation].method == "GET" else 1
+        result = await run_command(cmd, retries=retries)
+    finally:
+        if body_file is not None:
+            body_file.unlink(missing_ok=True)
+    if result.returncode != 0:
+        return result
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return CommandResult(cmd, 1, "", f"Unreadable response for {operation}: {result.stdout[:300]}")
+    return _full_result(operation, int(data.get("status") or 0), data.get("headers") or {},
+                        data.get("content") or "")
 
 
 async def fetch_and_parse(

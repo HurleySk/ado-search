@@ -143,7 +143,7 @@ def _full_result(operation: str, status: int, headers: dict, text: str) -> Comma
                              f"HTTP 203 for {operation}: not signed in (sign-in page returned)", headers)
     if 200 <= status < 300:
         return CommandResult(["request_full", operation], 0, text, "", headers)
-    return CommandResult(["request_full", operation], 1, "", f"HTTP {status} for {operation}: {text[:500]}", headers)
+    return CommandResult(["request_full", operation], 1, "", f"HTTP {status} for {operation}: {text[:2000]}", headers)
 
 
 async def run_operation_full(

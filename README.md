@@ -102,6 +102,7 @@ ado-search sync --include-attachments
 | `ado-search test-results <run>` | List a run's results with linked bugs (live) |
 | `ado-search wiki-show [path]` | Print a wiki page's markdown, or list page paths (live, any project) |
 | `ado-search wiki-update <path> <file>` | Replace a wiki page from a local file, ETag-guarded (`--dry-run` diffs) |
+| `ado-search analytics <entity>` | Run a read-only Analytics OData query, all pages, as JSON (live) |
 | `ado-search grep "pattern"` | Regex search across work item fields |
 | `ado-search children <parent_id>` | List children (or full tree) of a work item |
 
@@ -279,6 +280,30 @@ ado-search wiki-update "/QA SOP" qa-sop.md --project "Reporting Sandbox" --comme
 `wiki-update` reads the page first and sends its ETag with `If-Match`, so a page edited in between is refused (HTTP 412) instead of overwritten. The file is read as UTF-8; a BOM is dropped and line endings become LF. A missing page is an error unless `--create` is passed. Identical content makes no request.
 
 With `az-cli` or `az-powershell` auth these commands call ADO through `pwsh` `Invoke-WebRequest` (with a token from `az account get-access-token` or `Get-AzAccessToken`), because `az rest` does not return response headers.
+
+## Analytics
+
+`analytics ENTITY` runs a read-only query against the Analytics OData endpoint (`https://analytics.dev.azure.com/{org}[/{project}]/_odata/v4.0-preview/{ENTITY}`) and prints `{"value": [...]}` as JSON, with a one-line row count on stderr. `--query` is the raw OData query string; `--project` scopes it to one project (without it the query is organization-level, and the configured project is not used). It follows `@odata.nextLink` until the last page, or until `--max-rows`. `--out FILE` writes the JSON to a UTF-8 file. Nothing is written to ADO or the local store.
+
+```bash
+# Sprint dates (bash: escape $ inside double quotes; a backslash before a letter stays literal)
+ado-search analytics Iterations --project ALM \
+  --query "\$select=IterationPath,StartDate,EndDate&\$filter=startswith(IterationPath,'ALM\ALM O and M\OM Sprint')"
+
+# Bug counts by state
+ado-search analytics WorkItems --project ALM \
+  --query "\$apply=filter(WorkItemType eq 'Bug')/groupby((State),aggregate(\$count as Count))"
+
+# Every project, organization-level, written to a file
+ado-search analytics Projects --query '$select=ProjectName' --out projects.json
+```
+
+```powershell
+# PowerShell: single quotes keep $ and \ literal; double an embedded '
+ado-search analytics Iterations --project ALM --query '$select=IterationPath&$filter=startswith(IterationPath,''ALM\ALM O and M\OM Sprint'')'
+```
+
+Path literals take single backslashes (`'ALM\Sprint 1'`), as in the ADO UI. The query is URL-encoded except for OData punctuation (`$ ( ) , ' / = &`). An invalid query exits non-zero with Analytics' HTTP status and error message. The credentials need the **Analytics (read)** scope.
 
 ## Configuration
 

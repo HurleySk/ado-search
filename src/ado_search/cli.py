@@ -1103,6 +1103,47 @@ def wiki_update_cmd(page_path, file_path, wiki, comment, create, dry_run, projec
         click.echo(f"\n{'Created' if out['created'] else 'Updated'} {where} (ETag {out['etag']})")
 
 
+@main.command("analytics")
+@click.argument("entity")
+@click.option("--query", default=None,
+              help="Raw OData query string, e.g. \"$select=WorkItemId,Title&$filter=State eq 'Active'\"")
+@click.option("--project", default=None,
+              help="Project name (default: none, an organization-level query)")
+@click.option("--out", "out_path", type=click.Path(dir_okay=False, path_type=Path), default=None,
+              help="Write the JSON to this file (UTF-8) instead of stdout")
+@click.option("--max-rows", type=click.IntRange(min=1), default=None,
+              help="Stop after this many rows")
+@_data_dir_opt
+def analytics_cmd(entity, query, project, out_path, max_rows, data_dir):
+    """Query Azure DevOps Analytics (OData) live, read-only.
+
+    ENTITY is an entity set such as WorkItems, WorkItemSnapshot, Iterations,
+    Areas, Projects or Teams. Pages through @odata.nextLink and prints
+    {"value": [rows]} as JSON; a one-line row count goes to stderr. Nothing is
+    written to ADO or the local store.
+    """
+    import json
+
+    from ado_search.analytics import query_analytics
+    from ado_search.testplans import Conn
+
+    cfg = _load_conn(data_dir, require_project=False)
+    conn = Conn(org=cfg.org, project=project or "", auth_method=cfg.auth_method, pat=cfg.pat)
+    out = asyncio.run(query_analytics(conn, entity, query=query, max_rows=max_rows))
+
+    rows = out["value"]
+    text = json.dumps({"value": rows}, indent=2, ensure_ascii=False)
+    summary = f"{len(rows)} row(s) from {entity} ({out['pages']} page(s))"
+    if out["truncated"]:
+        summary += f", stopped at --max-rows {max_rows}"
+    if out_path is None:
+        click.echo(text)
+    else:
+        out_path.write_text(text + "\n", encoding="utf-8")
+        summary += f", written to {out_path}"
+    click.echo(summary, err=True)
+
+
 def _parse_since(ctx, param, value):
     if value is None:
         return None

@@ -34,6 +34,7 @@ OP_TEST_SUITE_CASES = "test-suite-cases"
 OP_TEST_POINT_LIST = "test-point-list"
 OP_TEST_RUN_LIST = "test-run-list"
 OP_TEST_RESULT_LIST = "test-result-list"
+OP_ANALYTICS = "analytics"
 
 PROJECT_LIST_TOP = 1000
 
@@ -263,6 +264,10 @@ OPERATIONS: dict[str, OperationDef] = {
     OP_TEST_RESULT_LIST: OperationDef(
         path="{url_project}/_apis/test/Runs/{run_id}/results",
         query_params=["detailsToInclude=WorkItems", "api-version=7.1"],
+    ),
+    # Analytics OData (analytics.dev.azure.com); the caller builds the full URL.
+    OP_ANALYTICS: OperationDef(
+        raw_url=True,
     ),
 }
 

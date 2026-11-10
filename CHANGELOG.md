@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.20.0] - 2026-11-10
+
+### Added
+
+- **`analytics ENTITY [--query TEXT] [--project NAME] [--out FILE] [--max-rows N]`** -- runs a read-only Analytics OData query (`analytics.dev.azure.com/{org}[/{project}]/_odata/v4.0-preview/{ENTITY}`) with the configured auth and prints `{"value": [...]}` as JSON, with a one-line row count on stderr. `--query` is the raw OData query string, URL-encoded except for OData punctuation (`$ ( ) , ' / = &`); `--project` scopes the query to one project, otherwise it is organization-level. Follows `@odata.nextLink` to the last page or `--max-rows`, and refuses a next link that leaves the Analytics host. An HTTP error exits non-zero with the status and Analytics' message. Nothing is written to ADO or the local store.
+
+### Changed
+
+- **HTTP errors from `run_operation_full`** keep up to 2,000 characters of the response body (was 500).
+
 ## [1.19.0] - 2026-11-09
 
 ### Added

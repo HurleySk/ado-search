@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.21.0] - 2026-11-18
+
+### Added
+
+- **`wiki-attach FILE [--name NAME] [--wiki NAME] [--project NAME]`** -- uploads a local file (an image, typically) as a wiki attachment (`PUT _apis/wiki/wikis/{wiki}/attachments?name=...`, body base64-encoded as the service requires, all three auth methods) and prints its path, `/.attachments/NAME` URL-encoded, on stdout, with an `![NAME](...)` embed line on stderr. `--name` overrides the attachment name (default: the file's name); `--wiki` defaults to the project's only wiki. A name already taken in the wiki is an error naming the file, never an overwrite.
+
 ## [1.20.0] - 2026-11-10
 
 ### Added

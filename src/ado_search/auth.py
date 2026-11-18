@@ -28,6 +28,7 @@ OP_PROJECT_LIST = "project-list"
 OP_GET_FIELDS = "get-fields"
 OP_CONNECTION_DATA = "connection-data"
 OP_WIKI_PAGE_PUT = "wiki-page-put"
+OP_WIKI_ATTACHMENT_PUT = "wiki-attachment-put"
 OP_TEST_PLAN_LIST = "test-plan-list"
 OP_TEST_SUITE_LIST = "test-suite-list"
 OP_TEST_SUITE_CASES = "test-suite-cases"
@@ -239,6 +240,13 @@ OPERATIONS: dict[str, OperationDef] = {
         method="PUT",
         path="{url_project}/_apis/wiki/wikis/{url_wiki}/pages",
         query_params=["path={path}", "api-version=7.1"],
+        has_body=True,
+    ),
+    # Body is the file's bytes base64-encoded as text, sent as application/octet-stream.
+    OP_WIKI_ATTACHMENT_PUT: OperationDef(
+        method="PUT",
+        path="{url_project}/_apis/wiki/wikis/{url_wiki}/attachments",
+        query_params=["name={encoded_path}", "api-version=7.1"],
         has_body=True,
     ),
     OP_TEST_PLAN_LIST: OperationDef(

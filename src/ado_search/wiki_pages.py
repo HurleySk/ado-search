@@ -1,12 +1,17 @@
-"""Live read and update of single wiki pages, in any project."""
+"""Live read and update of single wiki pages, and wiki attachment upload, in any project."""
 from __future__ import annotations
 
+import base64
 import difflib
 import json
+from pathlib import Path
+from urllib.parse import quote
 
 import click
 
-from ado_search.auth import OP_WIKI_LIST, OP_WIKI_PAGE_LIST, OP_WIKI_PAGE_PUT, OP_WIKI_PAGE_SHOW
+from ado_search.auth import (
+    OP_WIKI_ATTACHMENT_PUT, OP_WIKI_LIST, OP_WIKI_PAGE_LIST, OP_WIKI_PAGE_PUT, OP_WIKI_PAGE_SHOW,
+)
 from ado_search.testplans import Conn
 
 
@@ -74,8 +79,6 @@ async def update_page(conn: Conn, wiki: str, path: str, content: str, *,
 
     Returns {"changed", "diff", "created", "etag", "dry_run"}.
     """
-    from urllib.parse import quote
-
     content = normalize_content(content)
     exists, old, etag = await page_exists(conn, wiki, path)
     if not exists and not create:
@@ -94,3 +97,33 @@ async def update_page(conn: Conn, wiki: str, path: str, content: str, *,
     )
     out["etag"] = headers.get("etag", "")
     return out
+
+
+async def attach_file(conn: Conn, wiki: str, file_path: Path, name: str | None = None) -> dict:
+    """Upload ``file_path`` as a wiki attachment named ``name`` (default: its file name).
+
+    The service takes the bytes base64-encoded as text. Returns {"name", "path", "markdown_path",
+    "size"}; ``markdown_path`` is ``path`` URL-encoded for use in ``![alt](...)``. A name that is
+    already taken is refused by the service and raised as a ClickException.
+    """
+    from ado_search.runner import run_operation_full
+
+    name = name or file_path.name
+    if not name.strip() or "/" in name or "\\" in name:
+        raise click.ClickException(f"Invalid attachment name {name!r}: use a file name, not a path")
+    raw = file_path.read_bytes()
+    result = await run_operation_full(
+        conn.auth_method, OP_WIKI_ATTACHMENT_PUT, org=conn.org, project=conn.project, pat=conn.pat,
+        wiki=wiki, path=name, body=base64.b64encode(raw), content_type="application/octet-stream",
+    )
+    if result.returncode != 0:
+        err = result.stderr or f"{OP_WIKI_ATTACHMENT_PUT} failed"
+        if "HTTP 409" in err or "alreadyexists" in err.lower().replace(" ", ""):
+            raise click.ClickException(
+                f"Attachment {name!r} already exists in wiki {wiki!r}; {file_path.name} was not "
+                "uploaded (pass --name to use another name)")
+        raise click.ClickException(err)
+    data = json.loads(result.stdout) if result.stdout else {}
+    path = data.get("path") or f"/.attachments/{name}"
+    return {"name": data.get("name") or name, "path": path,
+            "markdown_path": quote(path, safe="/"), "size": len(raw)}

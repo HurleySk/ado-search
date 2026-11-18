@@ -1103,6 +1103,33 @@ def wiki_update_cmd(page_path, file_path, wiki, comment, create, dry_run, projec
         click.echo(f"\n{'Created' if out['created'] else 'Updated'} {where} (ETag {out['etag']})")
 
 
+@main.command("wiki-attach")
+@click.argument("file_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--name", default=None, help="Attachment name (default: the file's name)")
+@click.option("--wiki", default=None, help="Wiki name (default: the project's only wiki)")
+@_project_opt
+@_data_dir_opt
+def wiki_attach_cmd(file_path, name, wiki, project, data_dir):
+    """Upload FILE_PATH as a wiki attachment and print its path.
+
+    Prints the attachment path (/.attachments/NAME, URL-encoded) on stdout, for
+    use in a page as ![alt](/.attachments/NAME). A name already taken in the
+    wiki is refused, never overwritten; pass --name to use another.
+    """
+    from ado_search.wiki_pages import attach_file, resolve_wiki
+
+    conn = _live_conn(data_dir, project)
+
+    async def run():
+        wiki_name = await resolve_wiki(conn, wiki)
+        return wiki_name, await attach_file(conn, wiki_name, file_path, name)
+
+    wiki_name, out = asyncio.run(run())
+    click.echo(f"Uploaded {file_path.name} ({out['size']:,} bytes) to {conn.project}/{wiki_name}; "
+               f"embed with ![{out['name']}]({out['markdown_path']})", err=True)
+    click.echo(out["markdown_path"])
+
+
 @main.command("analytics")
 @click.argument("entity")
 @click.option("--query", default=None,

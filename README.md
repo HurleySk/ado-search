@@ -102,6 +102,7 @@ ado-search sync --include-attachments
 | `ado-search test-results <run>` | List a run's results with linked bugs (live) |
 | `ado-search wiki-show [path]` | Print a wiki page's markdown, or list page paths (live, any project) |
 | `ado-search wiki-update <path> <file>` | Replace a wiki page from a local file, ETag-guarded (`--dry-run` diffs) |
+| `ado-search wiki-attach <file>` | Upload a file as a wiki attachment and print its `/.attachments/` path |
 | `ado-search analytics <entity>` | Run a read-only Analytics OData query, all pages, as JSON (live) |
 | `ado-search grep "pattern"` | Regex search across work item fields |
 | `ado-search children <parent_id>` | List children (or full tree) of a work item |
@@ -265,7 +266,7 @@ Paging follows `x-ms-continuationtoken` (plans, suites, cases, points) or `$top`
 
 ## Wiki Pages
 
-`wiki-show` and `wiki-update` work on single pages in any project, independent of `sync`. `--wiki` defaults to the project's only wiki.
+`wiki-show`, `wiki-update` and `wiki-attach` work in any project, independent of `sync`. `--wiki` defaults to the project's only wiki.
 
 ```bash
 # List page paths, or print one page's markdown
@@ -275,9 +276,14 @@ ado-search wiki-show "/QA SOP" --project "Reporting Sandbox" --out qa-sop.md
 # Show the diff against the live page, then replace it
 ado-search wiki-update "/QA SOP" qa-sop.md --project "Reporting Sandbox" --dry-run
 ado-search wiki-update "/QA SOP" qa-sop.md --project "Reporting Sandbox" --comment "Finalize QA SOP"
+
+# Upload an image, then embed the printed path: ![Flow](/.attachments/qa-flow.png)
+ado-search wiki-attach qa-flow.png --project "Reporting Sandbox"
 ```
 
 `wiki-update` reads the page first and sends its ETag with `If-Match`, so a page edited in between is refused (HTTP 412) instead of overwritten. The file is read as UTF-8; a BOM is dropped and line endings become LF. A missing page is an error unless `--create` is passed. Identical content makes no request.
+
+`wiki-attach` uploads the file under `--name` (default: its file name) and prints the path to reference, `/.attachments/NAME` URL-encoded, on stdout; an `![NAME](...)` embed line goes to stderr. A name already taken in the wiki is refused, not overwritten.
 
 With `az-cli` or `az-powershell` auth these commands call ADO through `pwsh` `Invoke-WebRequest` (with a token from `az account get-access-token` or `Get-AzAccessToken`), because `az rest` does not return response headers.
 
